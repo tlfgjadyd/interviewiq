@@ -1,0 +1,52 @@
+
+
+
+
+# --- Python & Virtual Environments ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+.venv.bak/
+
+# --- Environment Secrets (CRITICAL) ---
+.env
+.env.*
+!.env.example  # Keep the example file to show required keys
+
+# --- Databases ---
+*.db
+*.sqlite3
+/data/         # Common folder for local DB storage
+
+# --- IDE & Editor Settings ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Testing & Coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# --- Distribution & Build ---
+dist/
+build/
+*.egg-info/
+*.spec
+
+# --- Logs ---
+*.log
+logs/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
