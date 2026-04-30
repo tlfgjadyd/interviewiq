@@ -2,6 +2,7 @@ import redis.asyncio as aioredis
 from app.core.config import settings
 
 redis_client: aioredis.Redis = None
+REDIS_TTL_SECONDS = 60 * 60 * 6
 
 async def init_redis():
     global redis_client
