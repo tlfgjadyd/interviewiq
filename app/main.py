@@ -7,7 +7,10 @@ from app.api.sessions import router as sessions_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    try:
+        await init_db()
+    except Exception as e:
+        print(f"[WARNING] DB init skipped: {e}")
     await init_redis()
     yield
 

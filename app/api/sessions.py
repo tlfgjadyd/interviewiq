@@ -128,6 +128,7 @@ def _count_chunks(chunks: list[dict[str, Any]]) -> AnswerChunkCounts:
     )
 
 
+# 첫 질문 및 다음 질문은 일단 하드코딩
 def _first_question(payload: SessionCreate) -> str:
     company = payload.company.replace("_", " ")
     role = payload.role.replace("_", " ")
