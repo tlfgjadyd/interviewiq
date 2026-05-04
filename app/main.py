@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.db.database import init_db
 from app.core.redis import init_redis
+from app.api.rag import router as rag_router
 from app.api.sessions import router as sessions_router
 
 @asynccontextmanager
@@ -23,6 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(sessions_router)
+app.include_router(rag_router)
 
 @app.get("/health")
 async def health():

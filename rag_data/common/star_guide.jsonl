@@ -1,0 +1,2 @@
+{"id":"star_project_001","content":"STAR 답변은 Situation, Task, Action, Result 순서로 구성한다. 특히 Action에서는 본인이 직접 한 판단과 행동을 말하고, Result에서는 수치나 검증 가능한 결과를 제시한다.","metadata":{"cluster":"general","role":"general","doc_type":"star_guide","topic":"project_experience","source":"team_curated","priority":5}}
+{"id":"star_followup_001","content":"답변에 Result가 약하면 결과 지표, 사용자 반응, 팀 기여도, 배운 점 중 하나를 구체화하도록 꼬리질문한다.","metadata":{"cluster":"general","role":"general","doc_type":"followup_question","topic":"project_experience","source":"team_curated","priority":4}}

@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.core.redis import REDIS_TTL_SECONDS, get_redis
+from app.rag import RagRetriever
 from app.schemas.chunk import (
     AnswerChunkCounts,
     AnswerStatusResponse,
@@ -25,6 +26,7 @@ from app.schemas.session import (
 )
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+rag_retriever = RagRetriever()
 
 
 def _session_meta_key(session_id: str) -> str:
@@ -128,17 +130,95 @@ def _count_chunks(chunks: list[dict[str, Any]]) -> AnswerChunkCounts:
     )
 
 
-# 첫 질문 및 다음 질문은 일단 하드코딩
 def _first_question(payload: SessionCreate) -> str:
+    contexts = rag_retriever.context_strings(
+        company=payload.company,
+        cluster=payload.cluster,
+        industry=payload.industry,
+        role=payload.role,
+        interview_type=payload.interviewType,
+        doc_types=["question", "evaluation_criteria", "star_guide"],
+        limit=3,
+    )
     company = payload.company.replace("_", " ")
     role = payload.role.replace("_", " ")
+    if contexts:
+        return f"{company} {role} 직무 기준으로 질문드리겠습니다. {contexts[0]}"
     return f"{company} {role} 직무 지원자로서, 가장 자신 있게 설명할 수 있는 프로젝트 경험을 말해주세요."
 
 
-def _next_question(answer_text: str) -> str:
+def _next_question(meta: dict[str, Any], answer_text: str) -> tuple[str, list[dict[str, Any]]]:
+    results = rag_retriever.search(
+        company=meta.get("company"),
+        cluster=meta.get("cluster"),
+        industry=meta.get("industry"),
+        role=meta.get("role"),
+        interview_type=meta.get("interviewType"),
+        text=answer_text,
+        doc_types=["followup_question", "evaluation_criteria", "star_guide"],
+        limit=4,
+    )
+    rag_context = [
+        {
+            "id": result.document.id,
+            "content": result.document.content,
+            "metadata": result.document.metadata.model_dump(),
+            "score": result.score,
+            "reasons": result.reasons,
+        }
+        for result in results
+    ]
+    followup = next(
+        (
+            result.document.content
+            for result in results
+            if result.document.metadata.doc_type == "followup_question"
+        ),
+        None,
+    )
+    if followup:
+        return followup, rag_context
     if answer_text.strip():
-        return "방금 답변에서 본인이 직접 맡은 역할과 결과를 수치나 근거 중심으로 조금 더 설명해 주세요."
-    return "답변 내용을 아직 확인하지 못했습니다. 같은 질문에 대해 핵심 경험을 다시 설명해 주세요."
+        return (
+            "방금 답변에서 본인이 직접 맡은 역할과 결과를 수치나 근거 중심으로 조금 더 설명해 주세요.",
+            rag_context,
+        )
+    return (
+        "답변 내용을 아직 확인하지 못했습니다. 같은 질문에 대해 핵심 경험을 다시 설명해 주세요.",
+        rag_context,
+    )
+
+
+def _summarize_nonverbal(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    vision_chunks = [chunk for chunk in chunks if isinstance(chunk.get("vision"), dict)]
+    if not vision_chunks:
+        return {
+            "summary": "수집된 비언어 chunk가 없어 자세/시선 피드백을 생성하지 못했습니다.",
+            "signals": [],
+        }
+
+    avg_posture = sum(
+        chunk["vision"]["posture"]["postureStability"] for chunk in vision_chunks
+    ) / len(vision_chunks)
+    avg_head_forward = sum(
+        chunk["vision"]["head"]["headForwardRatio"] for chunk in vision_chunks
+    ) / len(vision_chunks)
+    avg_hand_movement = sum(
+        chunk["vision"]["hands"]["handMovementIntensity"] for chunk in vision_chunks
+    ) / len(vision_chunks)
+
+    signals = [
+        {"metric": "postureStability", "value": round(avg_posture, 3)},
+        {"metric": "headForwardRatio", "value": round(avg_head_forward, 3)},
+        {"metric": "handMovementIntensity", "value": round(avg_hand_movement, 3)},
+    ]
+    if avg_posture < 0.7:
+        summary = "상체 자세 안정성이 낮은 구간이 있어 답변 중 자세 유지 피드백이 필요합니다."
+    elif avg_head_forward < 0.65:
+        summary = "얼굴 방향이 정면에서 벗어난 구간이 있어 주의 집중도 표현을 보완하면 좋습니다."
+    else:
+        summary = "전반적인 자세와 얼굴 방향 지표는 안정적인 편입니다."
+    return {"summary": summary, "signals": signals}
 
 
 @router.post("", response_model=SessionCreateResponse)
@@ -262,7 +342,8 @@ async def finish_answer(
         if isinstance(chunk.get("speech"), dict)
     ).strip()
     next_answer_turn_id = f"a_{uuid.uuid4().hex[:12]}"
-    next_question = _next_question(answer_text)
+    next_question, rag_context = _next_question(meta, answer_text)
+    nonverbal = _summarize_nonverbal(chunks)
 
     analysis = {
         "sessionId": session_id,
@@ -273,6 +354,12 @@ async def finish_answer(
         "endPhrase": payload.endPhrase,
         "answerText": answer_text,
         "chunkCount": len(chunks),
+        "ragContext": rag_context,
+        "contentFeedback": [
+            "답변에는 본인의 역할, 기술 선택 이유, 결과 지표가 포함될수록 좋습니다.",
+            "STT가 연결되면 이 항목은 실제 답변 텍스트 기반으로 더 구체화됩니다.",
+        ],
+        "nonverbalFeedback": nonverbal,
         "nextAnswerTurnId": next_answer_turn_id,
         "nextQuestion": next_question,
     }
