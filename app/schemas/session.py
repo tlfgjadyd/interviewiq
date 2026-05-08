@@ -42,3 +42,30 @@ class SessionFinishResponse(BaseModel):
     sessionId: str
     status: Literal["finished"]
     reportId: str
+
+
+class SessionDocumentsRequest(BaseModel):
+    resumeText: str
+    jobPostingText: str
+    company: str | None = None
+    role: str | None = None
+
+
+class ResumeSummary(BaseModel):
+    experiences: list[str]
+    skills: list[str]
+    claims: list[str]
+
+
+class JobSummary(BaseModel):
+    requiredSkills: list[str]
+    preferredSkills: list[str]
+    responsibilities: list[str]
+
+
+class SessionDocumentsResponse(BaseModel):
+    status: Literal["processed"]
+    resumeSummary: ResumeSummary
+    jobSummary: JobSummary
+    matchKeywords: list[str]
+    personalizedQuestion: str

@@ -84,50 +84,299 @@ print(f"firstQuestion : {session_data['firstQuestion']}")
 #---
 
 
-# ── 2. vision chunk 3개 전송 ───────────────────────────────
+# ── 2. 자기소개서/채용공고 문서 전송 ───────────────────────
+step("2. 자기소개서/채용공고 전송  POST /api/sessions/{id}/documents")
+documents_payload = {
+    "resumeText": (
+        "저는 팀 프로젝트에서 백엔드를 맡아 REST API 응답 속도를 개선했습니다. "
+        "PostgreSQL 쿼리 병목을 분석하고 인덱스를 추가해 평균 응답 시간을 줄였습니다. "
+        "팀원들과 협업하며 Redis 캐싱 전략도 함께 검토했습니다."
+    ),
+    "jobPostingText": (
+        "백엔드 개발자 채용. 주요 업무는 REST API 설계, 데이터베이스 최적화, "
+        "서비스 운영 안정성 개선입니다. PostgreSQL, Redis 경험과 협업 능력을 우대합니다."
+    ),
+    "company": "sk_hynix",
+    "role": "backend",
+}
+r = requests.post(
+    f"{BASE_URL}/api/sessions/{session_id}/documents",
+    json=documents_payload,
+)
+r.raise_for_status()
+documents_data = r.json()
+pretty(documents_data)
+
+step("2-1. 개인화 질문 확인  GET /api/sessions/{id}/next-question")
+r = requests.get(f"{BASE_URL}/api/sessions/{session_id}/next-question")
+r.raise_for_status()
+pretty(r.json())
+
+
+# ── 3. vision chunk 3개 전송 ───────────────────────────────
 VISION_CHUNKS = [
     {
+        "version": "vision_v2",
         "sessionId": session_id,
         "answerTurnId": answer_turn_id,
         "chunkId": "c_001",
         "t0": 0,
         "t1": 5000,
+        "context": {"questionType": "project_experience", "answerPhase": "start"},
         "vision": {
-            "posture": {"badPostureCount": 1, "badPostureDurationMs": 900, "postureStability": 0.78},
-            "hands":   {"handVisibleRatio": 0.96, "handMovementIntensity": 0.42, "gestureCount": 2},
-            "head":    {"faceDetectedRatio": 0.91, "headForwardRatio": 0.74, "lookingAwayCount": 1, "lookingAwayDurationMs": 1100},
-            "quality": {"frameCount": 145, "validFrameRatio": 0.89, "fullBodyDetectedRatio": 0.84},
+            "behaviorRiskScore": 24,
+            "nonverbalRiskScore": 24,
+            "level": "good",
+            "reasons": ["전반적으로 안정적인 구간입니다."],
+            "events": [],
+            "posture": {
+                "postureCollapse": 16,
+                "bodySway": 21,
+                "isBadPosture": False,
+                "isPostureCollapsed": False,
+            },
+            "gaze": {
+                "isFacingForward": True,
+                "isLookingAway": False,
+                "eyeCentered": True,
+                "headForward": True,
+                "gazeStable": True,
+                "gazeAwayDurationMs": 0,
+                "gazePenalty": 12,
+            },
+            "gesture": {
+                "fidgetScore": 22,
+                "handMovement": 34,
+                "handVelocity": 28,
+                "handJerk": 15,
+                "movementRepetition": 10,
+                "handToFaceProximity": 4,
+                "upperBodyMovement": 18,
+                "legMovement": 14,
+                "legShakingScore": 8,
+            },
+            "zScores": {
+                "postureCollapseZ": 0.1,
+                "handMovementZ": 0.2,
+                "gazeAwayZ": 0.0,
+                "bodySwayZ": 0.1,
+                "fidgetZ": 0.1,
+                "legMovementZ": 0.0,
+            },
+            "states": {
+                "isBadPosture": False,
+                "isFidgeting": False,
+                "isFacingForward": True,
+                "isGazeUnstable": False,
+                "isGoodSegment": True,
+                "isLegMovementHigh": False,
+                "isLegShaking": False,
+                "isPostureCollapsed": False,
+                "isNervous": False,
+                "isLookingAway": False,
+            },
+            "quality": {
+                "frameCount": 145,
+                "validFrameRatio": 0.89,
+                "fullBodyDetectedRatio": 0.84,
+                "lowerBodyDetectedRatio": 0.81,
+                "faceResolutionLevel": "low",
+                "confidence": 0.78,
+            },
+        },
+        "realtimeAudioSignals": {
+            "rmsVolume": 0.034,
+            "peakVolume": 0.11,
+            "isSpeakingRatio": 0.84,
+            "silenceDurationMs": 800,
+            "volumeWarning": "normal",
+            "paceHint": "normal",
         },
     },
     {
+        "version": "vision_v2",
         "sessionId": session_id,
         "answerTurnId": answer_turn_id,
         "chunkId": "c_002",
         "t0": 5000,
         "t1": 10000,
+        "context": {"questionType": "project_experience", "answerPhase": "middle"},
         "vision": {
-            "posture": {"badPostureCount": 0, "badPostureDurationMs": 0, "postureStability": 0.92},
-            "hands":   {"handVisibleRatio": 0.88, "handMovementIntensity": 0.21, "gestureCount": 1},
-            "head":    {"faceDetectedRatio": 0.95, "headForwardRatio": 0.89, "lookingAwayCount": 0, "lookingAwayDurationMs": 0},
-            "quality": {"frameCount": 150, "validFrameRatio": 0.95, "fullBodyDetectedRatio": 0.91},
+            "behaviorRiskScore": 38,
+            "nonverbalRiskScore": 38,
+            "level": "good",
+            "reasons": ["손 움직임이 약간 증가했지만 안정적인 범위입니다."],
+            "events": [],
+            "posture": {
+                "postureCollapse": 22,
+                "bodySway": 31,
+                "isBadPosture": False,
+                "isPostureCollapsed": False,
+            },
+            "gaze": {
+                "isFacingForward": True,
+                "isLookingAway": False,
+                "eyeCentered": True,
+                "headForward": True,
+                "gazeStable": True,
+                "gazeAwayDurationMs": 300,
+                "gazePenalty": 20,
+            },
+            "gesture": {
+                "fidgetScore": 36,
+                "handMovement": 48,
+                "handVelocity": 45,
+                "handJerk": 24,
+                "movementRepetition": 18,
+                "handToFaceProximity": 6,
+                "upperBodyMovement": 29,
+                "legMovement": 25,
+                "legShakingScore": 18,
+            },
+            "zScores": {
+                "postureCollapseZ": 0.3,
+                "handMovementZ": 0.6,
+                "gazeAwayZ": 0.2,
+                "bodySwayZ": 0.4,
+                "fidgetZ": 0.5,
+                "legMovementZ": 0.2,
+            },
+            "states": {
+                "isBadPosture": False,
+                "isFidgeting": False,
+                "isFacingForward": True,
+                "isGazeUnstable": False,
+                "isGoodSegment": True,
+                "isLegMovementHigh": False,
+                "isLegShaking": False,
+                "isPostureCollapsed": False,
+                "isNervous": False,
+                "isLookingAway": False,
+            },
+            "quality": {
+                "frameCount": 150,
+                "validFrameRatio": 0.95,
+                "fullBodyDetectedRatio": 0.91,
+                "lowerBodyDetectedRatio": 0.88,
+                "faceResolutionLevel": "medium",
+                "confidence": 0.86,
+            },
+        },
+        "realtimeAudioSignals": {
+            "rmsVolume": 0.041,
+            "peakVolume": 0.14,
+            "isSpeakingRatio": 0.9,
+            "silenceDurationMs": 500,
+            "volumeWarning": "normal",
+            "paceHint": "normal",
         },
     },
     {
+        "version": "vision_v2",
         "sessionId": session_id,
         "answerTurnId": answer_turn_id,
         "chunkId": "c_003",
         "t0": 10000,
         "t1": 15000,
+        "context": {"questionType": "project_experience", "answerPhase": "end"},
         "vision": {
-            "posture": {"badPostureCount": 2, "badPostureDurationMs": 1800, "postureStability": 0.61},
-            "hands":   {"handVisibleRatio": 0.72, "handMovementIntensity": 0.65, "gestureCount": 4},
-            "head":    {"faceDetectedRatio": 0.83, "headForwardRatio": 0.58, "lookingAwayCount": 3, "lookingAwayDurationMs": 2400},
-            "quality": {"frameCount": 148, "validFrameRatio": 0.82, "fullBodyDetectedRatio": 0.79},
+            "behaviorRiskScore": 61,
+            "nonverbalRiskScore": 61,
+            "level": "warning",
+            "reasons": [
+                "시선 또는 얼굴 방향이 정면에서 벗어났습니다.",
+                "다리 떨림으로 보이는 반복적인 하체 움직임이 감지되었습니다.",
+            ],
+            "events": [
+                {
+                    "type": "leg_shaking",
+                    "startMs": 10000,
+                    "endMs": 15000,
+                    "severity": "medium",
+                    "confidence": 0.72,
+                    "reason": "다리 떨림으로 보이는 반복적인 하체 움직임이 감지되었습니다.",
+                },
+                {
+                    "type": "gaze_away",
+                    "startMs": 10000,
+                    "endMs": 15000,
+                    "severity": "medium",
+                    "confidence": 0.55,
+                    "reason": "시선 또는 얼굴 방향이 정면에서 벗어났습니다.",
+                },
+            ],
+            "posture": {
+                "postureCollapse": 28,
+                "bodySway": 36,
+                "isBadPosture": False,
+                "isPostureCollapsed": False,
+            },
+            "gaze": {
+                "isFacingForward": False,
+                "isLookingAway": True,
+                "eyeCentered": False,
+                "headForward": False,
+                "gazeStable": False,
+                "gazeAwayDurationMs": 1800,
+                "gazePenalty": 55,
+            },
+            "gesture": {
+                "fidgetScore": 44,
+                "handMovement": 49,
+                "handVelocity": 54,
+                "handJerk": 32,
+                "movementRepetition": 18,
+                "handToFaceProximity": 10,
+                "upperBodyMovement": 36,
+                "legMovement": 54,
+                "kneeMovement": 42,
+                "kneeVelocity": 64,
+                "kneeVariance": 58,
+                "kneeZeroCrossingRate": 7.2,
+                "kneeZeroCrossingScore": 84,
+                "legShakingScore": 72,
+            },
+            "zScores": {
+                "postureCollapseZ": 0.4,
+                "handMovementZ": 0.5,
+                "gazeAwayZ": 2.1,
+                "bodySwayZ": 0.3,
+                "fidgetZ": 0.6,
+                "legMovementZ": 0.4,
+            },
+            "states": {
+                "isBadPosture": False,
+                "isFidgeting": False,
+                "isFacingForward": False,
+                "isGazeUnstable": True,
+                "isGoodSegment": False,
+                "isLegMovementHigh": False,
+                "isLegShaking": True,
+                "isPostureCollapsed": False,
+                "isNervous": False,
+                "isLookingAway": True,
+            },
+            "quality": {
+                "frameCount": 148,
+                "validFrameRatio": 0.82,
+                "fullBodyDetectedRatio": 0.79,
+                "lowerBodyDetectedRatio": 0.8,
+                "faceResolutionLevel": "low",
+                "confidence": 0.77,
+            },
+        },
+        "realtimeAudioSignals": {
+            "rmsVolume": 0.022,
+            "peakVolume": 0.08,
+            "isSpeakingRatio": 0.7,
+            "silenceDurationMs": 1200,
+            "volumeWarning": "too_low",
+            "paceHint": "slow",
         },
     },
 ]
 
-step("2. vision chunk 3개 전송  POST /api/sessions/{id}/vision-chunks")
+step("3. vision chunk 3개 전송  POST /api/sessions/{id}/vision-chunks")
 for vchunk in VISION_CHUNKS:
     r = requests.post(f"{BASE_URL}/api/sessions/{session_id}/vision-chunks", json=vchunk)
     r.raise_for_status()
@@ -136,8 +385,8 @@ for vchunk in VISION_CHUNKS:
     pretty(ack)
 
 
-# ── 3. audio-chunk 3개 전송 ────────────────────────────────
-step("3. audio chunk 3개 전송  POST /api/sessions/{id}/audio-chunks")
+# ── 4. audio-chunk 3개 전송 ────────────────────────────────
+step("4. audio chunk 3개 전송  POST /api/sessions/{id}/audio-chunks")
 for vchunk in VISION_CHUNKS:
     metadata = {
         "chunkId": vchunk["chunkId"],
@@ -165,8 +414,8 @@ for vchunk in VISION_CHUNKS:
     pretty(ack)
 
 
-# ── 4. 답변 종료 ───────────────────────────────────────────
-step("4. 답변 종료  POST /api/sessions/{id}/answers/{turn}/finish")
+# ── 5. 답변 종료 ───────────────────────────────────────────
+step("5. 답변 종료  POST /api/sessions/{id}/answers/{turn}/finish")
 finish_payload = {
     "endedBy": "voice_command",
     "endedAt": 15000,
@@ -180,8 +429,8 @@ r.raise_for_status()
 pretty(r.json())
 
 
-# ── 5. 답변 상태 확인 ─────────────────────────────────────
-step("5. 답변 chunk 상태 확인  GET /api/sessions/{id}/answers/{turn}/status")
+# ── 6. 답변 상태 확인 ─────────────────────────────────────
+step("6. 답변 chunk 상태 확인  GET /api/sessions/{id}/answers/{turn}/status")
 r = requests.get(
     f"{BASE_URL}/api/sessions/{session_id}/answers/{answer_turn_id}/status"
 )
@@ -189,8 +438,17 @@ r.raise_for_status()
 pretty(r.json())
 
 
-# ── 6. Redis 저장 chunk 전체 조회 ──────────────────────────
-step("6. Redis 저장 chunk 전체 조회  GET /api/sessions/{id}/chunks")
+# ── 7. 답변 분석 확인 ─────────────────────────────────────
+step("7. 답변 분석 확인  GET /api/sessions/{id}/answers/{turn}/analysis")
+r = requests.get(
+    f"{BASE_URL}/api/sessions/{session_id}/answers/{answer_turn_id}/analysis"
+)
+r.raise_for_status()
+pretty(r.json())
+
+
+# ── 8. Redis 저장 chunk 전체 조회 ──────────────────────────
+step("8. Redis 저장 chunk 전체 조회  GET /api/sessions/{id}/chunks")
 r = requests.get(f"{BASE_URL}/api/sessions/{session_id}/chunks")
 r.raise_for_status()
 chunks_in_redis = r.json()
@@ -204,13 +462,18 @@ for c in chunks_in_redis:
         print(f"  audioPath={c['audioPath']}")
     if c.get("vision"):
         v = c["vision"]
-        print(f"  postureStability={v['posture']['postureStability']}  "
-              f"headForwardRatio={v['head']['headForwardRatio']}  "
-              f"handMovementIntensity={v['hands']['handMovementIntensity']}")
+        print(f"  version={c.get('version')}  level={v['level']}  "
+              f"behaviorRiskScore={v['behaviorRiskScore']}  "
+              f"nonverbalRiskScore={v['nonverbalRiskScore']}")
+        print(f"  gazePenalty={v['gaze']['gazePenalty']}  "
+              f"legShakingScore={v['gesture']['legShakingScore']}  "
+              f"events={len(v['events'])}")
 
 
-# ── 7. Redis 직접 확인 안내 ────────────────────────────────
+# ── 9. Redis 직접 확인 안내 ────────────────────────────────
 step("완료 — Redis 직접 확인하려면 아래 명령 실행")
 print(f"  redis-cli GET \"session:{session_id}:chunk:c_001\"")
 print(f"  redis-cli SMEMBERS \"session:{session_id}:answer:{answer_turn_id}:chunks\"")
 print(f"  redis-cli GET \"session:{session_id}:meta\"")
+print(f"  redis-cli GET \"session:{session_id}:documents\"")
+print(f"  redis-cli LRANGE \"session:{session_id}:rag:documents\" 0 -1")

@@ -14,10 +14,16 @@ DocType = Literal[
     "star_guide",
     "nonverbal_criteria",
     "interview_basics",
+    "resume_claim",
+    "job_requirement",
+    "resume_summary",
+    "job_summary",
 ]
 
 
 class RagMetadata(BaseModel):
+    scope: Literal["global", "session"] = "global"
+    sessionId: str | None = None
     company: str | None = None
     cluster: str = "general"
     industry: str | None = None

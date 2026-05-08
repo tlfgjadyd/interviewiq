@@ -1,6 +1,11 @@
+# --- Claude ---
+.claude/
 
+# --- ref ---
+ref/
 
-
+# --- serena---
+serena/
 
 # --- Python & Virtual Environments ---
 __pycache__/

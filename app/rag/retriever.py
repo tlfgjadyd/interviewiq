@@ -18,6 +18,7 @@ class RagRetriever:
         interview_type: str | None = None,
         text: str | None = None,
         doc_types: list[DocType] | None = None,
+        extra_documents: list[RagDocument] | None = None,
         limit: int = 5,
     ) -> list[RagSearchResult]:
         query = RagSearchQuery(
@@ -30,9 +31,12 @@ class RagRetriever:
             doc_types=doc_types,
             limit=limit,
         )
+        documents = list(load_rag_documents())
+        if extra_documents:
+            documents.extend(extra_documents)
         results = [
             self._score_document(document, query)
-            for document in load_rag_documents()
+            for document in documents
         ]
         filtered = [result for result in results if result.score > 0]
         return sorted(
@@ -58,6 +62,10 @@ class RagRetriever:
 
         if query.doc_types and document.metadata.doc_type not in query.doc_types:
             return RagSearchResult(document=document, score=0, reasons=[])
+
+        if document.metadata.scope == "session":
+            score += 20
+            reasons.append("session_scope")
 
         if query.company and document.metadata.company == query.company:
             score += 10
