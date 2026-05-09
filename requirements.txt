@@ -1,6 +1,7 @@
 alembic==1.18.4
 asyncpg==0.31.0
 fastapi==0.136.0
+openai==2.36.0
 psycopg2-binary==2.9.11
 pydantic==2.13.2
 pydantic-settings==2.13.1

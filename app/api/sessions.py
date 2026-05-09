@@ -8,6 +8,8 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.core.redis import REDIS_TTL_SECONDS, get_redis
+from app.llm import QuestionGenerator
+from app.llm.question_generator import GeneratedQuestion
 from app.rag import RagRetriever
 from app.rag.schema import RagDocument, RagMetadata
 from app.schemas.chunk import (
@@ -31,6 +33,7 @@ from app.schemas.session import (
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 rag_retriever = RagRetriever()
+question_generator = QuestionGenerator()
 TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣+#.]+")
 SKILL_KEYWORDS = [
     "python",
@@ -318,8 +321,8 @@ def _personalized_question(summary: dict[str, Any], role: str | None) -> str:
     if match_keywords:
         keyword_text = ", ".join(match_keywords[:3])
         return (
-            f"자기소개서와 채용공고에서 공통으로 드러난 {keyword_text} 경험을 기준으로 질문드리겠습니다. "
-            f"{role_label} 직무에서 이 역량을 발휘했던 구체적인 상황, 본인의 역할, 결과를 설명해 주세요."
+            f"자기소개서와 채용공고에서 공통으로 드러난 {keyword_text} 경험에 대해 여쭤보겠습니다. "
+            f"{role_label} 직무 관점에서 그 경험의 문제 상황, 본인의 역할, 적용한 기술, 결과를 설명해 주세요."
         )
     return (
         f"자기소개서의 주요 경험이 {role_label} 직무 요구사항과 어떻게 연결되는지, "
@@ -327,8 +330,38 @@ def _personalized_question(summary: dict[str, Any], role: str | None) -> str:
     )
 
 
-def _first_question(payload: SessionCreate) -> str:
-    contexts = rag_retriever.context_strings(
+def _generate_personalized_question(
+    *,
+    company: str | None,
+    role: str | None,
+    interview_type: str,
+    summary: dict[str, Any],
+    session_documents: list[RagDocument],
+) -> GeneratedQuestion:
+    fallback = _personalized_question(summary, role)
+    rag_context = [
+        {
+            "id": document.id,
+            "content": document.content,
+            "metadata": document.metadata.model_dump(),
+        }
+        for document in session_documents
+    ]
+    generated = question_generator.generate_first_question(
+        company=company or "unknown",
+        role=role or "general",
+        interview_type=interview_type,
+        rag_context=rag_context,
+        resume_summary=summary["resumeSummary"],
+        job_summary=summary["jobSummary"],
+        match_keywords=summary["matchKeywords"],
+        fallback_question=fallback,
+    )
+    return generated
+
+
+def _first_question(payload: SessionCreate) -> GeneratedQuestion:
+    results = rag_retriever.search(
         company=payload.company,
         cluster=payload.cluster,
         industry=payload.industry,
@@ -337,18 +370,38 @@ def _first_question(payload: SessionCreate) -> str:
         doc_types=["question", "evaluation_criteria", "star_guide"],
         limit=3,
     )
+    rag_context = [
+        {
+            "id": result.document.id,
+            "content": result.document.content,
+            "metadata": result.document.metadata.model_dump(),
+            "score": result.score,
+            "reasons": result.reasons,
+        }
+        for result in results
+    ]
     company = payload.company.replace("_", " ")
     role = payload.role.replace("_", " ")
-    if contexts:
-        return f"{company} {role} 직무 기준으로 질문드리겠습니다. {contexts[0]}"
-    return f"{company} {role} 직무 지원자로서, 가장 자신 있게 설명할 수 있는 프로젝트 경험을 말해주세요."
+    fallback = (
+        f"{company} {role} 직무와 관련해 가장 자신 있게 설명할 수 있는 프로젝트 경험을 "
+        "문제 상황, 본인의 역할, 해결 과정, 결과 중심으로 말씀해 주세요."
+    )
+    generated = question_generator.generate_first_question(
+        company=payload.company,
+        role=payload.role,
+        interview_type=payload.interviewType,
+        rag_context=rag_context,
+        fallback_question=fallback,
+    )
+    return generated
 
 
 def _next_question(
     meta: dict[str, Any],
     answer_text: str,
     session_documents: list[RagDocument] | None = None,
-) -> tuple[str, list[dict[str, Any]]]:
+    nonverbal_feedback: dict[str, Any] | None = None,
+) -> tuple[GeneratedQuestion, list[dict[str, Any]]]:
     results = rag_retriever.search(
         company=meta.get("company"),
         cluster=meta.get("cluster"),
@@ -385,16 +438,22 @@ def _next_question(
         None,
     )
     if followup:
-        return followup, rag_context
-    if answer_text.strip():
-        return (
-            "방금 답변에서 본인이 직접 맡은 역할과 결과를 수치나 근거 중심으로 조금 더 설명해 주세요.",
-            rag_context,
-        )
-    return (
-        "답변 내용을 아직 확인하지 못했습니다. 같은 질문에 대해 핵심 경험을 다시 설명해 주세요.",
-        rag_context,
+        fallback = followup
+    elif answer_text.strip():
+        fallback = "방금 답변에서 본인이 직접 맡은 역할과 결과를 수치나 근거 중심으로 조금 더 설명해 주세요."
+    else:
+        fallback = "답변 내용을 아직 확인하지 못했습니다. 같은 질문에 대해 핵심 경험을 다시 설명해 주세요."
+    generated = question_generator.generate_followup_question(
+        company=meta.get("company"),
+        role=meta.get("role"),
+        interview_type=meta.get("interviewType"),
+        current_question=meta.get("currentQuestion"),
+        answer_text=answer_text,
+        rag_context=rag_context,
+        nonverbal_feedback=nonverbal_feedback,
+        fallback_question=fallback,
     )
+    return generated, rag_context
 
 
 def _summarize_nonverbal(chunks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -458,7 +517,8 @@ async def create_session(payload: SessionCreate):
         "industry": payload.industry,
         "status": "active",
         "currentAnswerTurnId": answer_turn_id,
-        "currentQuestion": first_question,
+        "currentQuestion": first_question.text,
+        "currentQuestionSource": first_question.source,
     }
 
     await _write_json(_session_meta_key(session_id), meta)
@@ -467,7 +527,8 @@ async def create_session(payload: SessionCreate):
     return SessionCreateResponse(
         sessionId=session_id,
         answerTurnId=answer_turn_id,
-        firstQuestion=first_question,
+        firstQuestion=first_question.text,
+        firstQuestionSource=first_question.source,
     )
 
 
@@ -480,7 +541,13 @@ async def process_session_documents(session_id: str, payload: SessionDocumentsRe
 
     summary = _build_session_document_summary(normalized_payload)
     documents = _build_session_rag_documents(session_id, normalized_payload, summary)
-    personalized_question = _personalized_question(summary, role)
+    personalized_question = _generate_personalized_question(
+        company=company,
+        role=role,
+        interview_type=meta.get("interviewType", "project_experience"),
+        summary=summary,
+        session_documents=documents,
+    )
 
     stored_summary = {
         "sessionId": session_id,
@@ -489,7 +556,8 @@ async def process_session_documents(session_id: str, payload: SessionDocumentsRe
         "resumeText": payload.resumeText,
         "jobPostingText": payload.jobPostingText,
         **summary,
-        "personalizedQuestion": personalized_question,
+        "personalizedQuestion": personalized_question.text,
+        "personalizedQuestionSource": personalized_question.source,
     }
     await _write_json(_session_documents_key(session_id), stored_summary)
 
@@ -503,7 +571,8 @@ async def process_session_documents(session_id: str, payload: SessionDocumentsRe
     await client.expire(_session_rag_docs_key(session_id), REDIS_TTL_SECONDS)
 
     meta["hasSessionDocuments"] = True
-    meta["currentQuestion"] = personalized_question
+    meta["currentQuestion"] = personalized_question.text
+    meta["currentQuestionSource"] = personalized_question.source
     await _write_json(_session_meta_key(session_id), meta)
 
     return SessionDocumentsResponse(
@@ -511,7 +580,8 @@ async def process_session_documents(session_id: str, payload: SessionDocumentsRe
         resumeSummary=summary["resumeSummary"],
         jobSummary=summary["jobSummary"],
         matchKeywords=summary["matchKeywords"],
-        personalizedQuestion=personalized_question,
+        personalizedQuestion=personalized_question.text,
+        personalizedQuestionSource=personalized_question.source,
     )
 
 
@@ -623,8 +693,13 @@ async def finish_answer(
     ).strip()
     next_answer_turn_id = f"a_{uuid.uuid4().hex[:12]}"
     session_documents = await _load_session_rag_documents(session_id)
-    next_question, rag_context = _next_question(meta, answer_text, session_documents)
     nonverbal = _summarize_nonverbal(chunks)
+    next_question, rag_context = _next_question(
+        meta,
+        answer_text,
+        session_documents,
+        nonverbal,
+    )
 
     analysis = {
         "sessionId": session_id,
@@ -642,13 +717,15 @@ async def finish_answer(
         ],
         "nonverbalFeedback": nonverbal,
         "nextAnswerTurnId": next_answer_turn_id,
-        "nextQuestion": next_question,
+        "nextQuestion": next_question.text,
+        "nextQuestionSource": next_question.source,
     }
     await _write_json(_answer_analysis_key(session_id, answer_turn_id), analysis)
 
     client = await _redis()
     meta["currentAnswerTurnId"] = next_answer_turn_id
-    meta["currentQuestion"] = next_question
+    meta["currentQuestion"] = next_question.text
+    meta["currentQuestionSource"] = next_question.source
     await _write_json(_session_meta_key(session_id), meta)
     await client.rpush(_turns_key(session_id), next_answer_turn_id)
     await client.expire(_turns_key(session_id), REDIS_TTL_SECONDS)
@@ -658,7 +735,8 @@ async def finish_answer(
         status="analysis_ready",
         nextQuestionPending=False,
         nextAnswerTurnId=next_answer_turn_id,
-        nextQuestion=next_question,
+        nextQuestion=next_question.text,
+        nextQuestionSource=next_question.source,
     )
 
 
@@ -690,6 +768,7 @@ async def get_next_question(session_id: str):
         sessionId=session_id,
         answerTurnId=meta["currentAnswerTurnId"],
         question=meta["currentQuestion"],
+        questionSource=meta.get("currentQuestionSource"),
     )
 
 

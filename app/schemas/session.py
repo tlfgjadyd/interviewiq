@@ -16,6 +16,7 @@ class SessionCreateResponse(BaseModel):
     sessionId: str
     answerTurnId: str
     firstQuestion: str
+    firstQuestionSource: str | None = None
 
 
 class AnswerFinishRequest(BaseModel):
@@ -30,12 +31,14 @@ class AnswerFinishResponse(BaseModel):
     nextQuestionPending: bool
     nextAnswerTurnId: str
     nextQuestion: str
+    nextQuestionSource: str | None = None
 
 
 class NextQuestionResponse(BaseModel):
     sessionId: str
     answerTurnId: str
     question: str
+    questionSource: str | None = None
 
 
 class SessionFinishResponse(BaseModel):
@@ -69,3 +72,4 @@ class SessionDocumentsResponse(BaseModel):
     jobSummary: JobSummary
     matchKeywords: list[str]
     personalizedQuestion: str
+    personalizedQuestionSource: str | None = None
