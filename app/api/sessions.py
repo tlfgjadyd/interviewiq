@@ -18,6 +18,7 @@ from app.schemas.chunk import (
     AudioChunkMetadata,
     ChunkAck,
     ChunkStatus,
+    SpeechChunkCreate,
     VisionChunkCreate,
 )
 from app.schemas.session import (
@@ -674,6 +675,34 @@ async def receive_audio_chunk(
         sessionId=session_id,
         answerTurnId=parsed_metadata.answerTurnId,
         chunkId=parsed_metadata.chunkId,
+        status=ChunkStatus(**chunk["status"]),
+    )
+
+
+@router.post("/{session_id}/speech-chunks", response_model=ChunkAck)
+async def receive_speech_chunk(session_id: str, payload: SpeechChunkCreate):
+    await _ensure_session(session_id)
+    existing = await _read_json(_chunk_key(session_id, payload.chunkId)) or {}
+    chunk = await _merge_chunk(
+        session_id=session_id,
+        answer_turn_id=payload.answerTurnId,
+        chunk_id=payload.chunkId,
+        patch={
+            "speech": {
+                "text": payload.text,
+                "segments": [segment.model_dump() for segment in payload.segments],
+                "source": payload.source,
+            },
+            "status": {
+                **existing.get("status", {}),
+                "speechReady": True,
+            },
+        },
+    )
+    return ChunkAck(
+        sessionId=session_id,
+        answerTurnId=payload.answerTurnId,
+        chunkId=payload.chunkId,
         status=ChunkStatus(**chunk["status"]),
     )
 

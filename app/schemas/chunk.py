@@ -137,6 +137,26 @@ class AudioChunkMetadata(BaseModel):
     mimeType: str
 
 
+class SpeechSegment(BaseModel):
+    startMs: int = Field(ge=0)
+    endMs: int = Field(ge=0)
+    text: str
+
+    @model_validator(mode="after")
+    def validate_time_order(self):
+        if self.endMs < self.startMs:
+            raise ValueError("endMs must be greater than or equal to startMs")
+        return self
+
+
+class SpeechChunkCreate(BaseModel):
+    chunkId: str
+    answerTurnId: str
+    text: str
+    segments: list[SpeechSegment] = Field(default_factory=list)
+    source: Literal["manual_test", "browser_stt", "openai_whisper", "local_whisper"] = "manual_test"
+
+
 class ChunkStatus(BaseModel):
     visionReady: bool = False
     audioReceived: bool = False

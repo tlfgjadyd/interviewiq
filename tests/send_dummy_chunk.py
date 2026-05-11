@@ -415,7 +415,62 @@ for vchunk in VISION_CHUNKS:
 
 
 # ── 5. 답변 종료 ───────────────────────────────────────────
-step("5. 답변 종료  POST /api/sessions/{id}/answers/{turn}/finish")
+SPEECH_CHUNKS = [
+    {
+        "chunkId": "c_001",
+        "answerTurnId": answer_turn_id,
+        "text": "저는 팀 프로젝트에서 백엔드를 맡아 REST API 응답 속도를 개선했습니다.",
+        "segments": [
+            {
+                "startMs": 0,
+                "endMs": 4500,
+                "text": "저는 팀 프로젝트에서 백엔드를 맡아 REST API 응답 속도를 개선했습니다.",
+            }
+        ],
+        "source": "manual_test",
+    },
+    {
+        "chunkId": "c_002",
+        "answerTurnId": answer_turn_id,
+        "text": "PostgreSQL 쿼리 실행 계획을 확인했고 병목이 되는 조회 조건에 인덱스를 추가했습니다.",
+        "segments": [
+            {
+                "startMs": 5000,
+                "endMs": 9500,
+                "text": "PostgreSQL 쿼리 실행 계획을 확인했고 병목이 되는 조회 조건에 인덱스를 추가했습니다.",
+            }
+        ],
+        "source": "manual_test",
+    },
+    {
+        "chunkId": "c_003",
+        "answerTurnId": answer_turn_id,
+        "text": "그 결과 평균 응답 시간이 줄었고 Redis 캐싱 적용 범위도 팀원들과 함께 정리했습니다.",
+        "segments": [
+            {
+                "startMs": 10000,
+                "endMs": 14500,
+                "text": "그 결과 평균 응답 시간이 줄었고 Redis 캐싱 적용 범위도 팀원들과 함께 정리했습니다.",
+            }
+        ],
+        "source": "manual_test",
+    },
+]
+
+step("5. speech chunk 3개 전송  POST /api/sessions/{id}/speech-chunks")
+for schunk in SPEECH_CHUNKS:
+    r = requests.post(
+        f"{BASE_URL}/api/sessions/{session_id}/speech-chunks",
+        json=schunk,
+    )
+    r.raise_for_status()
+    ack = r.json()
+    print(f"\n[{schunk['chunkId']}] speech 전송 완료")
+    pretty(ack)
+
+
+# ── 6. 답변 종료 ───────────────────────────────────────────
+step("6. 답변 종료  POST /api/sessions/{id}/answers/{turn}/finish")
 finish_payload = {
     "endedBy": "voice_command",
     "endedAt": 15000,
@@ -429,8 +484,8 @@ r.raise_for_status()
 pretty(r.json())
 
 
-# ── 6. 답변 상태 확인 ─────────────────────────────────────
-step("6. 답변 chunk 상태 확인  GET /api/sessions/{id}/answers/{turn}/status")
+# ── 7. 답변 상태 확인 ─────────────────────────────────────
+step("7. 답변 chunk 상태 확인  GET /api/sessions/{id}/answers/{turn}/status")
 r = requests.get(
     f"{BASE_URL}/api/sessions/{session_id}/answers/{answer_turn_id}/status"
 )
@@ -438,8 +493,8 @@ r.raise_for_status()
 pretty(r.json())
 
 
-# ── 7. 답변 분석 확인 ─────────────────────────────────────
-step("7. 답변 분석 확인  GET /api/sessions/{id}/answers/{turn}/analysis")
+# ── 8. 답변 분석 확인 ─────────────────────────────────────
+step("8. 답변 분석 확인  GET /api/sessions/{id}/answers/{turn}/analysis")
 r = requests.get(
     f"{BASE_URL}/api/sessions/{session_id}/answers/{answer_turn_id}/analysis"
 )
@@ -447,8 +502,8 @@ r.raise_for_status()
 pretty(r.json())
 
 
-# ── 8. Redis 저장 chunk 전체 조회 ──────────────────────────
-step("8. Redis 저장 chunk 전체 조회  GET /api/sessions/{id}/chunks")
+# ── 9. Redis 저장 chunk 전체 조회 ──────────────────────────
+step("9. Redis 저장 chunk 전체 조회  GET /api/sessions/{id}/chunks")
 r = requests.get(f"{BASE_URL}/api/sessions/{session_id}/chunks")
 r.raise_for_status()
 chunks_in_redis = r.json()
@@ -458,6 +513,8 @@ for c in chunks_in_redis:
     print(f"  visionReady={c['status']['visionReady']}  "
           f"audioReceived={c['status']['audioReceived']}  "
           f"speechReady={c['status']['speechReady']}")
+    if c.get("speech"):
+        print(f"  speechText={c['speech']['text']}")
     if c.get("audioPath"):
         print(f"  audioPath={c['audioPath']}")
     if c.get("vision"):
@@ -470,7 +527,7 @@ for c in chunks_in_redis:
               f"events={len(v['events'])}")
 
 
-# ── 9. Redis 직접 확인 안내 ────────────────────────────────
+# ── 10. Redis 직접 확인 안내 ───────────────────────────────
 step("완료 — Redis 직접 확인하려면 아래 명령 실행")
 print(f"  redis-cli GET \"session:{session_id}:chunk:c_001\"")
 print(f"  redis-cli SMEMBERS \"session:{session_id}:answer:{answer_turn_id}:chunks\"")
