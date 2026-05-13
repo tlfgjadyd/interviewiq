@@ -74,8 +74,12 @@ def _turns_key(session_id: str) -> str:
     return f"session:{session_id}:turns"
 
 
-def _chunk_key(session_id: str, chunk_id: str) -> str:
-    return f"session:{session_id}:chunk:{chunk_id}"
+def _chunk_key(session_id: str, answer_turn_id: str, chunk_id: str) -> str:
+    return f"session:{session_id}:answer:{answer_turn_id}:chunk:{chunk_id}"
+
+
+def _session_chunk_pattern(session_id: str) -> str:
+    return f"session:{session_id}:answer:*:chunk:*"
 
 
 def _answer_chunks_key(session_id: str, answer_turn_id: str) -> str:
@@ -125,7 +129,7 @@ async def _merge_chunk(
     chunk_id: str,
     patch: dict[str, Any],
 ) -> dict[str, Any]:
-    existing = await _read_json(_chunk_key(session_id, chunk_id)) or {
+    existing = await _read_json(_chunk_key(session_id, answer_turn_id, chunk_id)) or {
         "sessionId": session_id,
         "answerTurnId": answer_turn_id,
         "chunkId": chunk_id,
@@ -146,7 +150,7 @@ async def _merge_chunk(
         )
 
     existing.update(patch)
-    await _write_json(_chunk_key(session_id, chunk_id), existing)
+    await _write_json(_chunk_key(session_id, answer_turn_id, chunk_id), existing)
 
     client = await _redis()
     await client.sadd(_answer_chunks_key(session_id, answer_turn_id), chunk_id)
@@ -159,7 +163,7 @@ async def _load_answer_chunks(session_id: str, answer_turn_id: str) -> list[dict
     chunk_ids = await client.smembers(_answer_chunks_key(session_id, answer_turn_id))
     chunks = []
     for chunk_id in chunk_ids:
-        chunk = await _read_json(_chunk_key(session_id, chunk_id))
+        chunk = await _read_json(_chunk_key(session_id, answer_turn_id, chunk_id))
         if chunk:
             chunks.append(chunk)
     return sorted(chunks, key=lambda item: (item.get("t0", 0), item.get("chunkId", "")))
@@ -618,9 +622,12 @@ async def receive_vision_chunk(session_id: str, payload: VisionChunkCreate):
                 else None
             ),
             "status": {
-                **(await _read_json(_chunk_key(session_id, payload.chunkId)) or {}).get(
-                    "status", {}
-                ),
+                **(
+                    await _read_json(
+                        _chunk_key(session_id, payload.answerTurnId, payload.chunkId)
+                    )
+                    or {}
+                ).get("status", {}),
                 **status,
             },
         },
@@ -648,12 +655,22 @@ async def receive_audio_chunk(
     safe_chunk_id = "".join(
         char for char in parsed_metadata.chunkId if char.isalnum() or char in {"_", "-"}
     )
+    safe_answer_turn_id = "".join(
+        char
+        for char in parsed_metadata.answerTurnId
+        if char.isalnum() or char in {"_", "-"}
+    )
     audio_dir = Path(tempfile.gettempdir()) / "interviewiq_audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
-    audio_path = audio_dir / f"{session_id}_{safe_chunk_id}.webm"
+    audio_path = audio_dir / f"{session_id}_{safe_answer_turn_id}_{safe_chunk_id}.webm"
     audio_path.write_bytes(await audio.read())
 
-    existing = await _read_json(_chunk_key(session_id, parsed_metadata.chunkId)) or {}
+    existing = (
+        await _read_json(
+            _chunk_key(session_id, parsed_metadata.answerTurnId, parsed_metadata.chunkId)
+        )
+        or {}
+    )
     chunk = await _merge_chunk(
         session_id=session_id,
         answer_turn_id=parsed_metadata.answerTurnId,
@@ -663,6 +680,11 @@ async def receive_audio_chunk(
             "t1": parsed_metadata.t1,
             "audioPath": str(audio_path),
             "audioMimeType": parsed_metadata.mimeType,
+            "audioMetadata": {
+                "language": parsed_metadata.language,
+                "browserTranscript": parsed_metadata.browserTranscript,
+                "browserLatestText": parsed_metadata.browserLatestText,
+            },
             "status": {
                 **existing.get("status", {}),
                 "audioReceived": True,
@@ -682,7 +704,7 @@ async def receive_audio_chunk(
 @router.post("/{session_id}/speech-chunks", response_model=ChunkAck)
 async def receive_speech_chunk(session_id: str, payload: SpeechChunkCreate):
     await _ensure_session(session_id)
-    existing = await _read_json(_chunk_key(session_id, payload.chunkId)) or {}
+    existing = await _read_json(_chunk_key(session_id, payload.answerTurnId, payload.chunkId)) or {}
     chunk = await _merge_chunk(
         session_id=session_id,
         answer_turn_id=payload.answerTurnId,
@@ -720,6 +742,10 @@ async def finish_answer(
         for chunk in chunks
         if isinstance(chunk.get("speech"), dict)
     ).strip()
+    answer_text_source = "speech_chunks"
+    if not answer_text and payload.browserTranscript:
+        answer_text = payload.browserTranscript.strip()
+        answer_text_source = "browser_speech_recognition"
     next_answer_turn_id = f"a_{uuid.uuid4().hex[:12]}"
     session_documents = await _load_session_rag_documents(session_id)
     nonverbal = _summarize_nonverbal(chunks)
@@ -737,7 +763,11 @@ async def finish_answer(
         "endedBy": payload.endedBy,
         "endedAt": payload.endedAt,
         "endPhrase": payload.endPhrase,
+        "language": payload.language,
+        "speechMetrics": payload.speechMetrics,
+        "browserTranscript": payload.browserTranscript,
         "answerText": answer_text,
+        "answerTextSource": answer_text_source,
         "chunkCount": len(chunks),
         "ragContext": rag_context,
         "contentFeedback": [
@@ -805,7 +835,7 @@ async def get_next_question(session_id: str):
 async def get_session_chunks(session_id: str):
     await _ensure_session(session_id)
     client = await _redis()
-    keys = await client.keys(_chunk_key(session_id, "*"))
+    keys = await client.keys(_session_chunk_pattern(session_id))
     chunks = []
     for key in keys:
         chunk = await _read_json(key)

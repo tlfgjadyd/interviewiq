@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ASMC 프로젝트 변경점 요약</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --panel: #ffffff;
+        --ink: #17202a;
+        --muted: #637083;
+        --line: #d9e1ea;
+        --accent: #256f61;
+        --accent-soft: #e8f3f0;
+        --warn: #8a5a00;
+        --warn-soft: #fff5d8;
+        --code: #f1f4f7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        line-height: 1.55;
+      }
+
+      main {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 40px 0 64px;
+      }
+
+      header {
+        margin-bottom: 24px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(28px, 4vw, 42px);
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin-bottom: 14px;
+        font-size: 22px;
+      }
+
+      h3 {
+        margin-bottom: 8px;
+        font-size: 17px;
+      }
+
+      .lead {
+        max-width: 880px;
+        margin-top: 8px;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .metrics {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin: 24px 0;
+      }
+
+      .metric,
+      section,
+      .file {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      .metric {
+        padding: 16px;
+      }
+
+      .metric strong {
+        display: block;
+        color: var(--accent);
+        font-size: 26px;
+      }
+
+      section {
+        margin-top: 16px;
+        padding: 20px;
+      }
+
+      .flow {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .step {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfe;
+        padding: 14px;
+      }
+
+      .step span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        margin-bottom: 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .files {
+        grid-template-columns: 1fr;
+      }
+
+      .file {
+        padding: 16px;
+      }
+
+      .path {
+        display: inline-block;
+        margin-bottom: 10px;
+        border-radius: 6px;
+        background: var(--code);
+        padding: 5px 8px;
+        color: #263241;
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 13px;
+      }
+
+      ul {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+
+      li + li {
+        margin-top: 5px;
+      }
+
+      .tag {
+        display: inline-block;
+        margin-left: 6px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        padding: 2px 8px;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .note {
+        border-left: 4px solid var(--warn);
+        border-radius: 6px;
+        background: var(--warn-soft);
+        padding: 14px 16px;
+        color: #4a3600;
+      }
+
+      code {
+        border-radius: 4px;
+        background: var(--code);
+        padding: 2px 5px;
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 0.95em;
+      }
+
+      @media (max-width: 860px) {
+        .metrics,
+        .flow {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>ASMC 프로젝트 변경점 요약</h1>
+        <p class="lead">
+          현재 작업 폴더는 Git 저장소가 아니므로, 아래 내용은 이번 작업 중 실제로
+          수정하거나 추가한 주요 파일 기준으로 정리했습니다.
+        </p>
+      </header>
+
+      <div class="grid metrics">
+        <div class="metric">
+          <strong>10+</strong>
+          <p>주요 변경 파일</p>
+        </div>
+        <div class="metric">
+          <strong>4</strong>
+          <p>주요 폴더</p>
+        </div>
+        <div class="metric">
+          <strong>5초</strong>
+          <p>MediaRecorder chunk 단위</p>
+        </div>
+        <div class="metric">
+          <strong>STT</strong>
+          <p>gpt-4o-mini-transcribe 기준</p>
+        </div>
+      </div>
+
+      <section>
+        <h2>현재 의도한 동작 흐름</h2>
+        <div class="grid flow">
+          <div class="step">
+            <span>1</span>
+            <h3>세션 시작</h3>
+            <p><code>Start Session</code> 버튼으로 sessionId와 answerTurnId를 생성합니다.</p>
+          </div>
+          <div class="step">
+            <span>2</span>
+            <h3>오디오 스트림</h3>
+            <p>마이크를 열고 MediaRecorder가 5초마다 audio chunk를 백엔드로 보냅니다.</p>
+          </div>
+          <div class="step">
+            <span>3</span>
+            <h3>실시간 피드백</h3>
+            <p>SpeechRecognition 결과로 말하기 평가 카드만 갱신합니다.</p>
+          </div>
+          <div class="step">
+            <span>4</span>
+            <h3>답변 종료</h3>
+            <p>버튼 또는 종료 키워드로 마지막 chunk를 flush하고 finish API를 호출합니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>파일별 변경 내용</h2>
+        <div class="grid files">
+          <article class="file">
+            <div class="path">app/page.tsx</div>
+            <span class="tag">프론트 화면</span>
+            <ul>
+              <li>상단 <code>Finish Answer</code> 버튼을 숨기고 <code>Start Session</code>만 남겼습니다.</li>
+              <li>답변 종료는 오디오 패널 내부의 안전한 버튼으로 처리하도록 UX를 정리했습니다.</li>
+              <li><code>RealtimeAudio</code>와 <code>Camera</code>를 좌우 패널에 배치하는 기존 구조는 유지했습니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">components/screenpipe/realtime-audio.tsx</div>
+            <span class="tag">오디오 핵심 로직</span>
+            <ul>
+              <li>답변 종료 음성 키워드를 추가했습니다: <code>답변 끝</code>, <code>답변 마치겠습니다</code>, <code>이상입니다</code>, <code>여기까지입니다</code>.</li>
+              <li>영어 종료 키워드도 추가했습니다: <code>end answer</code>, <code>answer complete</code>, <code>that's my answer</code>, <code>i am done</code>.</li>
+              <li>MediaRecorder가 세션의 <code>chunkMs</code> 값에 따라 5초 단위 audio blob을 백엔드 <code>/audio-chunks</code>로 전송합니다.</li>
+              <li>답변 종료 버튼을 추가해 Chrome 외 브라우저에서도 음성명령 대신 종료할 수 있게 했습니다.</li>
+              <li>답변 종료 시 <code>recorder.requestData()</code>로 마지막 녹음 조각을 먼저 flush한 뒤 <code>finishAnswer</code>를 호출합니다.</li>
+              <li>SpeechRecognition 결과는 실시간 말하기 평가용으로 사용하고, <code>mode: "coaching_only"</code>로 <code>/api/whisper</code>에 전달합니다.</li>
+              <li>실시간 피드백은 면접관 답변이나 꼬리질문을 생성하지 않고 <code>coachingAnalysis</code> 카드만 갱신하도록 분리했습니다.</li>
+              <li>브라우저 전사문과 음성 지표를 답변 종료 요청 metadata로 함께 보낼 수 있게 했습니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">context/InterviewSessionContext.tsx</div>
+            <span class="tag">세션 상태</span>
+            <ul>
+              <li><code>finishAnswer</code>가 <code>endPhrase</code> 외에 <code>browserTranscript</code>, <code>language</code>, <code>speechMetrics</code> 같은 metadata를 받을 수 있게 확장했습니다.</li>
+              <li>답변 종료 요청 body에 metadata를 합쳐 백엔드로 전달하도록 변경했습니다.</li>
+              <li><code>NEXT_PUBLIC_BACKEND_URL</code>이 비어 있으면 Next 내부 목업 API를 사용하고, 값이 있으면 실제 백엔드로 요청합니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">app/api/whisper/route.ts</div>
+            <span class="tag">OpenRouter 분석 API</span>
+            <ul>
+              <li><code>OPENROUTER_API_KEY</code>와 OpenRouter base URL을 사용하도록 유지했습니다.</li>
+              <li><code>mode: "coaching_only"</code> 분기를 추가해 실시간 말하기 평가 JSON만 반환할 수 있게 했습니다.</li>
+              <li>기존 꼬리질문/면접관 응답 생성 로직은 별도 흐름으로 유지했습니다.</li>
+              <li>실시간 분석 문구는 심리 상태 단정 대신 관찰 가능한 말하기 신호 중심으로 작성되도록 프롬프트를 구성했습니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">app/api/openai/route.ts</div>
+            <span class="tag">요약 API</span>
+            <ul>
+              <li>OpenRouter 기반 요약/리포트 생성 라우트로 유지했습니다.</li>
+              <li><code>OPENROUTER_API_KEY</code>를 사용하도록 정리했습니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">app/api/sessions/[[...path]]/route.ts</div>
+            <span class="tag">프론트 개발용 목업 API</span>
+            <ul>
+              <li>실제 백엔드가 없을 때 프론트 개발을 계속할 수 있도록 세션 생성, audio chunk 저장, 답변 종료 목업 응답을 제공합니다.</li>
+              <li>Next 15 route handler 타입에 맞게 context 타입을 정리했습니다.</li>
+              <li>실제 운영 백엔드가 연결되면 <code>NEXT_PUBLIC_BACKEND_URL</code> 설정으로 대체됩니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">app/layout.tsx</div>
+            <span class="tag">앱 메타데이터</span>
+            <ul>
+              <li>브라우저 탭 제목이 <code>asmc project</code>로 설정되어 있습니다.</li>
+              <li><code>globals.css</code>와 <code>Toaster</code>를 root layout에서 유지합니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">app/globals.css</div>
+            <span class="tag">전역 스타일</span>
+            <ul>
+              <li>Tailwind base/components/utilities와 CSS 변수 기반 색상 토큰을 사용합니다.</li>
+              <li>버튼 색상은 <code>components/ui/button.tsx</code>의 variant와 이 파일의 CSS 변수 조합으로 결정됩니다.</li>
+              <li>현재 <code>@layer base</code> 블록이 중복되어 있지만 빌드는 성공합니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">backend/app/core/config.py</div>
+            <span class="tag">백엔드 환경설정</span>
+            <ul>
+              <li><code>OPENROUTER_API_KEY</code>와 <code>OPENAI_API_KEY</code>를 분리했습니다.</li>
+              <li>백엔드 STT 모델 기본값으로 <code>OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"</code>를 추가했습니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">backend/README.md</div>
+            <span class="tag">백엔드 문서</span>
+            <ul>
+              <li>환경변수 예시에 <code>OPENAI_API_KEY</code>와 <code>OPENAI_STT_MODEL</code>을 추가했습니다.</li>
+              <li>OpenRouter 키와 OpenAI Platform 키의 역할을 구분할 수 있도록 예시를 보강했습니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">backend/FRONTEND_BACKEND_HANDOFF.md</div>
+            <span class="tag">신규 문서</span>
+            <ul>
+              <li>백엔드 개발자에게 전달할 프론트-백엔드 연동 계약 문서를 새로 만들었습니다.</li>
+              <li>세션 생성, 5초 audio chunk 업로드, 답변 종료, STT 처리, 음성 지표, 다음 질문 생성 흐름을 정리했습니다.</li>
+              <li>버튼 종료와 음성명령 종료의 차이, Chrome 의존성, 백엔드 저장 데이터 예시를 포함했습니다.</li>
+            </ul>
+          </article>
+
+          <article class="file">
+            <div class="path">.env</div>
+            <span class="tag">로컬 전용</span>
+            <ul>
+              <li><code>NEXT_PUBLIC_BACKEND_URL</code>을 비워 프론트 개발 시 Next 내부 목업 API를 사용하도록 했습니다.</li>
+              <li><code>OPENROUTER_API_KEY</code>는 프론트 API route의 OpenRouter 호출에 사용합니다.</li>
+              <li><code>OPENAI_API_KEY</code>와 <code>OPENAI_STT_MODEL</code>은 백엔드 STT 용도로 분리했습니다.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>버튼 역할 정리</h2>
+        <ul>
+          <li><code>Start Session</code>: 면접 세션과 첫 answer turn을 생성합니다.</li>
+          <li><code>Start Audio Transcription Stream</code>: 마이크, MediaRecorder, SpeechRecognition을 시작합니다.</li>
+          <li><code>답변 종료 / Finish Answer</code>: 마지막 audio chunk를 flush하고 현재 answer turn을 종료합니다.</li>
+          <li>상단 <code>Finish Answer</code>는 혼선을 줄이기 위해 숨겼습니다.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>백엔드 담당자에게 전달할 핵심</h2>
+        <ul>
+          <li>5초 audio chunk endpoint에서는 OpenAI STT를 호출하지 말고 저장만 합니다.</li>
+          <li>STT와 정식 음성 분석은 <code>/answers/{answerTurnId}/finish</code> 시점에 answer 단위로 처리합니다.</li>
+          <li>STT 모델은 <code>gpt-4o-mini-transcribe</code>를 기본값으로 사용합니다.</li>
+          <li>실시간 카드용 feedback은 프론트의 SpeechRecognition 결과와 OpenRouter API를 사용합니다.</li>
+          <li>최종 꼬리질문/보고서는 백엔드가 audio chunks, STT 텍스트, speech metrics를 종합해 생성합니다.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>주의사항</h2>
+        <div class="note">
+          <p>
+            <code>.env</code>에는 실제 API 키가 들어갈 수 있으므로 GitHub나 ZIP 공유 대상에서
+            제외해야 합니다. 공유 시에는 실제 키가 없는 <code>.env.example</code> 형태로
+            변수명만 전달하는 것이 안전합니다.
+          </p>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

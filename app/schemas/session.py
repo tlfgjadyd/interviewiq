@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,9 @@ class AnswerFinishRequest(BaseModel):
     endedBy: Literal["voice_command", "silence", "button", "keyboard", "manual"]
     endedAt: int = Field(ge=0)
     endPhrase: str | None = None
+    browserTranscript: str | None = None
+    language: str | None = None
+    speechMetrics: dict[str, Any] | None = None
 
 
 class AnswerFinishResponse(BaseModel):

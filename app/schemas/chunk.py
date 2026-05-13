@@ -6,19 +6,39 @@ from pydantic import BaseModel, Field, model_validator
 class VisionContext(BaseModel):
     questionType: str = "unknown"
     answerPhase: Literal["start", "middle", "end", "unknown"] = "unknown"
+    timeSinceQuestionStart: float | None = Field(default=None, ge=0)
+    timeSinceAnswerStart: float | None = Field(default=None, ge=0)
+    isDifficultQuestion: bool | None = None
 
 
 class VisionEvent(BaseModel):
-    type: Literal["leg_shaking", "leg_movement", "bad_posture", "fidget", "gaze_away"]
-    startMs: int = Field(ge=0)
-    endMs: int = Field(ge=0)
+    type: Literal[
+        "leg_shaking",
+        "leg_movement",
+        "bad_posture",
+        "fidget",
+        "gaze_away",
+        "hand_jerk",
+        "self_touch",
+        "body_sway",
+    ]
+    t0: float | None = Field(default=None, ge=0)
+    t1: float | None = Field(default=None, ge=0)
+    startMs: int | None = Field(default=None, ge=0)
+    endMs: int | None = Field(default=None, ge=0)
     severity: Literal["low", "medium", "high"]
     confidence: float = Field(ge=0, le=1)
     reason: str
 
     @model_validator(mode="after")
     def validate_time_order(self):
-        if self.endMs < self.startMs:
+        if self.t0 is None and self.startMs is None:
+            raise ValueError("event must include t0/t1 or startMs/endMs")
+        if self.t1 is None and self.endMs is None:
+            raise ValueError("event must include t0/t1 or startMs/endMs")
+        if self.t0 is not None and self.t1 is not None and self.t1 < self.t0:
+            raise ValueError("t1 must be greater than or equal to t0")
+        if self.startMs is not None and self.endMs is not None and self.endMs < self.startMs:
             raise ValueError("endMs must be greater than or equal to startMs")
         return self
 
@@ -36,7 +56,8 @@ class VisionGazeV2(BaseModel):
     eyeCentered: bool
     headForward: bool
     gazeStable: bool
-    gazeAwayDurationMs: int = Field(ge=0)
+    gazeAwayDuration: float | None = Field(default=None, ge=0)
+    gazeAwayDurationMs: int | None = Field(default=None, ge=0)
     gazePenalty: float = Field(ge=0, le=100)
 
 
@@ -91,7 +112,7 @@ class VisionQualityV2(BaseModel):
 class VisionAnalysisV2(BaseModel):
     behaviorRiskScore: float = Field(ge=0, le=100)
     nonverbalRiskScore: float = Field(ge=0, le=100)
-    level: Literal["good", "warning", "danger"]
+    level: Literal["good", "caution", "warning", "bad", "danger"]
     reasons: list[str] = Field(default_factory=list)
     events: list[VisionEvent] = Field(default_factory=list)
     posture: VisionPostureV2
@@ -135,6 +156,9 @@ class AudioChunkMetadata(BaseModel):
     t0: int = Field(ge=0)
     t1: int = Field(gt=0)
     mimeType: str
+    language: str | None = None
+    browserTranscript: str | None = None
+    browserLatestText: str | None = None
 
 
 class SpeechSegment(BaseModel):

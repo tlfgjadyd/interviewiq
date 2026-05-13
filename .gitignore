@@ -55,3 +55,25 @@ logs/
 # --- OS Specific ---
 .DS_Store
 Thumbs.db
+
+
+# --- Frontend local/dependency/build artifacts ---
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/coverage/
+frontend/.vercel/
+frontend/tsconfig.tsbuildinfo
+frontend/next-env.d.ts
+frontend/.DS_Store
+frontend/uploads/
+frontend/tmp/
+frontend/temp/
+frontend/*.webm
+frontend/*.wav
+frontend/*.mp3
+frontend/*.m4a
