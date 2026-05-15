@@ -717,6 +717,14 @@ export function RealtimeAudio({
   };
 
   useEffect(() => {
+    if (session?.status === "finished" && isStreamingRef.current) {
+      stopStreaming();
+    }
+    // stopStreaming uses refs and should run only on session status changes here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.status]);
+
+  useEffect(() => {
     return () => {
       stopStreaming();
     };
@@ -725,6 +733,20 @@ export function RealtimeAudio({
   }, []);
 
   const generateSummary = async () => {
+    const reportHistory =
+      historyRef.current ||
+      answerTranscriptRef.current ||
+      latestBrowserTranscriptRef.current;
+    const reportWindow =
+      typeof window !== "undefined" ? window.open("", "_blank") : null;
+
+    if (reportWindow) {
+      reportWindow.document.write(
+        "<!doctype html><title>Interview Summary</title><body style=\"font-family: system-ui, sans-serif; padding: 32px; color: #0f172a;\"><h1>Interview Summary</h1><p>보고서를 생성하는 중입니다...</p></body>"
+      );
+      reportWindow.document.close();
+    }
+
     setLoading(true);
     setError(null);
 
@@ -736,7 +758,7 @@ export function RealtimeAudio({
         },
         body: JSON.stringify({
           content: JSON.stringify(metrics),
-          history,
+          history: reportHistory,
           language,
         }),
       });
@@ -747,82 +769,39 @@ export function RealtimeAudio({
         throw new Error(data?.error || "Failed to generate summary");
       }
 
-      setSummary(data.message ?? "");
+      const message = data.message ?? "";
+      setSummary(message);
+
+      if (reportWindow) {
+        const reportKey = `interviewiq-summary-${Date.now()}`;
+        localStorage.setItem(
+          reportKey,
+          JSON.stringify({
+            summary: message,
+            history: reportHistory,
+            metrics,
+            language,
+            createdAt: new Date().toISOString(),
+          })
+        );
+        reportWindow.location.href = `/summary?key=${encodeURIComponent(
+          reportKey
+        )}`;
+      }
     } catch (err) {
       console.error("Error generating summary:", err);
-      setSummary(
+      const message =
         language === "ko-KR"
           ? "요약 생성 중 오류가 발생했습니다."
-          : "An error occurred while generating the summary."
-      );
+          : "An error occurred while generating the summary.";
+      setSummary(message);
+
+      if (reportWindow) {
+        reportWindow.document.body.innerHTML = `<h1>Interview Summary</h1><p>${message}</p>`;
+      }
     } finally {
       setLoading(false);
     }
-  };
-
-  const renderTranscriptionContent = (
-    transcription: SimpleTranscriptionChunk | null
-  ) => {
-    return (
-      <div className="space-y-2 text-xs">
-        <div className="flex flex-col text-slate-600">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <span className="font-semibold">timestamp: </span>
-              <span>
-                {transcription
-                  ? new Date(transcription.timestamp).toLocaleString()
-                  : ""}
-              </span>
-            </div>
-            <div>
-              <span className="font-semibold">device: </span>
-              <span>{transcription ? transcription.device : ""}</span>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <span className="font-semibold">type: </span>
-              <span>
-                {transcription
-                  ? transcription.is_input
-                    ? "Input"
-                    : "Output"
-                  : ""}
-              </span>
-            </div>
-            <div>
-              <span className="font-semibold">final: </span>
-              <span>
-                {transcription ? (transcription.is_final ? "Yes" : "No") : ""}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-slate-100 rounded p-2 overflow-auto max-h-[100px] whitespace-pre-wrap font-mono text-xs">
-          {transcription ? transcription.transcription : ""}
-        </div>
-
-        <div className="mt-2">
-          <div className="text-slate-600 font-semibold mb-1">History:</div>
-          <div className="bg-slate-100 rounded p-2 overflow-auto h-[130px] whitespace-pre-wrap font-mono text-xs">
-            {history}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderSummaryContent = () => {
-    return (
-      <div className="mt-2">
-        <div className="text-slate-600 font-semibold mb-1">Summary:</div>
-        <div className="bg-slate-100 rounded p-2 overflow-auto h-[130px] whitespace-pre-wrap font-mono text-xs">
-          {summary}
-        </div>
-      </div>
-    );
   };
 
   const getScoreColor = (score: number) => {
@@ -963,50 +942,86 @@ export function RealtimeAudio({
   };
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-6xl">
-      <div className="flex justify-between items-center mb-2">
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant={language === "ko-KR" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setLanguage("ko-KR")}
-          >
-            한국어
-          </Button>
-          <Button
-            type="button"
-            variant={language === "en-US" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setLanguage("en-US")}
-          >
-            English
-          </Button>
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">답변 컨트롤</h2>
+            <span className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 text-xs text-slate-500">
+              i
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-slate-500">
+            답변 시작과 종료를 이곳에서 제어하고, 실시간 인식 문장을 확인합니다.
+          </p>
         </div>
 
-        {history && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              navigator.clipboard.writeText(history);
-              setHistory("");
-              historyRef.current = "";
-              answerTranscriptRef.current = "";
-              latestBrowserTranscriptRef.current = "";
-              setInterviewerText("");
-              setCoachingAnalysis(null);
-              setSummary(null);
-              setTranscription(null);
-            }}
-          >
-            Clear History
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-lg bg-slate-100 p-1">
+            <Button
+              type="button"
+              variant={language === "ko-KR" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setLanguage("ko-KR")}
+              className={language === "ko-KR" ? "bg-white text-slate-950 shadow-sm hover:bg-white" : ""}
+            >
+              한국어
+            </Button>
+            <Button
+              type="button"
+              variant={language === "en-US" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setLanguage("en-US")}
+              className={language === "en-US" ? "bg-white text-slate-950 shadow-sm hover:bg-white" : ""}
+            >
+              English
+            </Button>
+          </div>
+          {history && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                navigator.clipboard.writeText(history);
+                setHistory("");
+                historyRef.current = "";
+                answerTranscriptRef.current = "";
+                latestBrowserTranscriptRef.current = "";
+                setInterviewerText("");
+                setCoachingAnalysis(null);
+                setSummary(null);
+                setTranscription(null);
+              }}
+            >
+              Clear
+            </Button>
+          )}
+        </div>
       </div>
 
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <Button onClick={isStreaming ? stopStreaming : startStreaming} size="sm">
+      <div className="mt-5 rounded-lg border border-blue-100 bg-blue-50/70 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+            Current Question
+          </span>
+          <Badge className="bg-white text-blue-700 hover:bg-white">
+            {session ? `Q${session.questionIndex + 1}` : "Ready"}
+          </Badge>
+        </div>
+        <p className="mt-2 text-base font-semibold leading-7 text-slate-950">
+          {session?.currentQuestion ??
+            (language === "ko-KR"
+              ? "세션을 시작하면 현재 질문이 표시됩니다."
+              : "The current question appears after the session starts.")}
+        </p>
+      </div>
+
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        <Button
+          onClick={isStreaming ? stopStreaming : startStreaming}
+          size="sm"
+          className={isStreaming ? "bg-slate-900" : "bg-blue-600 hover:bg-blue-700"}
+        >
           {isStreaming ? (
             <>
               <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -1031,90 +1046,99 @@ export function RealtimeAudio({
             ? "답변 종료"
             : "Finish Answer"}
         </Button>
+        <div className="ml-auto flex items-center gap-2 text-xs font-medium text-slate-500">
+          <span
+            className={`h-2 w-2 rounded-full ${
+              isStreaming ? "bg-emerald-500" : "bg-slate-300"
+            }`}
+          />
+          {isStreaming ? "streaming" : "stopped"}
+        </div>
       </div>
 
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
 
-      {renderTranscriptionContent(transcription)}
+      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold">실시간 답변 인식</h3>
+            <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">
+              {transcription?.is_final ? "final" : "live"}
+            </Badge>
+          </div>
+          <div className="min-h-[92px] rounded bg-white p-3 text-sm leading-6 text-slate-700">
+            {transcription?.transcription ||
+              (language === "ko-KR"
+                ? "답변이 인식되면 이곳에 표시됩니다."
+                : "Recognized speech will appear here.")}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold">
+              {language === "ko-KR" ? "면접관 응답" : "Interviewer's Response"}
+            </h3>
+            <Badge
+              className={
+                isStreaming
+                  ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
+                  : "bg-slate-200 text-slate-600 hover:bg-slate-200"
+              }
+            >
+              {isStreaming
+                ? isFinishingAnswer
+                  ? language === "ko-KR"
+                    ? "제출 중"
+                    : "Submitting"
+                  : isResponding
+                  ? language === "ko-KR"
+                    ? "생성 중"
+                    : "Generating"
+                  : language === "ko-KR"
+                  ? "듣는 중"
+                  : "Listening"
+                : "Off"}
+            </Badge>
+          </div>
+          <div className="min-h-[92px] rounded bg-white p-3 text-sm leading-6 text-slate-700">
+            {interviewerText ||
+              (session
+                ? session.currentQuestion
+                : language === "ko-KR"
+                ? "세션 시작 후 첫 질문이 표시됩니다."
+                : "The first question appears after the session starts.")}
+          </div>
+        </div>
+      </div>
 
       {renderCoachingAnalysis()}
 
-      <div className="flex items-center gap-1.5 text-right justify-end">
-        <div
-          className={`w-1.5 h-1.5 rounded-full ${
-            isStreaming ? "bg-green-500" : "bg-gray-400"
-          }`}
-        />
-        <span className="text-xs text-gray-500 font-mono">
-          {isStreaming ? "streaming" : "stopped"}
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <span className="text-xs text-slate-500">
+          {history ? "브라우저 transcript 기반 임시 요약 가능" : "답변 기록 대기 중"}
         </span>
+        <Button
+          onClick={generateSummary}
+          disabled={loading}
+          className="fixed bottom-6 right-6 z-40 bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:bg-blue-700"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              Creating Summary
+            </>
+          ) : (
+            "Interview Summary"
+          )}
+        </Button>
       </div>
 
-      <Button onClick={generateSummary}>
-        {loading ? (
-          <>
-            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-            Creating Summary
-          </>
-        ) : (
-          "Interview Summary"
-        )}
-      </Button>
-
-      {summary && renderSummaryContent()}
-
-      <Card className="mt-10">
-        <CardHeader className="pb-2 bottom-0">
-          <CardTitle className="text-lg flex items-center gap-2">
-            {language === "ko-KR"
-              ? "면접관 응답"
-              : "Interviewer's Response"}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Status:</span>
-              <Badge
-                variant={
-                  isStreaming && (isResponding || isFinishingAnswer)
-                    ? "destructive"
-                    : "default"
-                }
-                className={
-                  isStreaming
-                    ? isResponding || isFinishingAnswer
-                      ? "bg-red-500"
-                      : "bg-green-500"
-                    : "bg-red-500"
-                }
-              >
-                {isStreaming
-                  ? isFinishingAnswer
-                    ? language === "ko-KR"
-                      ? "답변 분석 요청 중입니다"
-                      : "Submitting answer"
-                    : isResponding
-                    ? language === "ko-KR"
-                      ? "응답 생성 중입니다. 잠시만 기다려 주세요"
-                      : "Generating a response, please wait"
-                    : language === "ko-KR"
-                    ? "듣는 중"
-                    : "Listening"
-                  : "Off"}
-              </Badge>
-            </div>
-          </div>
-
-          {error && <p>{error}</p>}
-
-          {interviewerText && (
-            <div className="bg-slate-100 rounded p-3 whitespace-pre-wrap text-sm">
-              {interviewerText}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+      {summary && (
+        <p className="mt-3 text-xs text-slate-500">
+          요약 보고서를 새 탭으로 열었습니다.
+        </p>
+      )}
+    </section>
   );
 }

@@ -24,6 +24,8 @@ export type InterviewSessionState = {
   answerTurnId: string;
   chunkMs: number;
   currentQuestion: string;
+  questionIndex: number;
+  questionHistory: string[];
   turnStartedAtMs: number;
   currentChunkIndex: number;
   status?: "active" | "finished";
@@ -92,6 +94,16 @@ const getBackendBaseUrl = () => {
   );
 };
 
+const createTimeoutSignal = (timeoutMs: number) => {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  return {
+    signal: controller.signal,
+    clear: () => window.clearTimeout(timeoutId),
+  };
+};
+
 export const InterviewSessionProvider = ({
   children,
 }: {
@@ -135,6 +147,8 @@ export const InterviewSessionProvider = ({
           answerTurnId: data.answerTurnId,
           chunkMs: requestPayload.chunkMs,
           currentQuestion: data.firstQuestion,
+          questionIndex: 0,
+          questionHistory: [data.firstQuestion],
           turnStartedAtMs: performance.now(),
           currentChunkIndex: 0,
           status: "active",
@@ -199,6 +213,8 @@ export const InterviewSessionProvider = ({
                 ...current,
                 answerTurnId: data.nextAnswerTurnId,
                 currentQuestion: data.nextQuestion,
+                questionIndex: current.questionIndex + 1,
+                questionHistory: [...current.questionHistory, data.nextQuestion],
                 turnStartedAtMs: performance.now(),
                 currentChunkIndex: 0,
               }
@@ -225,11 +241,14 @@ export const InterviewSessionProvider = ({
     setIsFinishingSession(true);
     setError(null);
 
+    const timeout = createTimeoutSignal(15000);
+
     try {
       const response = await fetch(
         `${backendBaseUrl}/api/sessions/${session.sessionId}/finish`,
         {
           method: "POST",
+          signal: timeout.signal,
         }
       );
 
@@ -251,10 +270,15 @@ export const InterviewSessionProvider = ({
       return data;
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Failed to finish session";
+        err instanceof DOMException && err.name === "AbortError"
+          ? "Session finish timed out. Please try again."
+          : err instanceof Error
+          ? err.message
+          : "Failed to finish session";
       setError(message);
       throw err;
     } finally {
+      timeout.clear();
       setIsFinishingSession(false);
     }
   }, [backendBaseUrl, session]);

@@ -11,24 +11,23 @@ serena/
 __pycache__/
 *.py[cod]
 *$py.class
-.venv/
-venv/
-env/
+.venv
+venv
+env
 .env
 .venv.bak/
 
 # --- Environment Secrets (CRITICAL) ---
 .env
 .env.*
-!.env.example  # Keep the example file to show required keys
+!.env.example
 
 # --- Databases ---
 *.db
 *.sqlite3
-/data/         # Common folder for local DB storage
+/data/
 
 # --- IDE & Editor Settings ---
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -77,3 +76,4 @@ frontend/*.webm
 frontend/*.wav
 frontend/*.mp3
 frontend/*.m4a
+frontend/ref/

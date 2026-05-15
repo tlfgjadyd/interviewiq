@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+
 /.pnp
 .pnp.js
 .yarn/install-state.gz
@@ -45,6 +45,10 @@ pnpm-debug.log*
 
 # vercel
 .vercel
+# dependencies
+/node_modules
+node_modules/
+node_modules
 
 # typescript
 *.tsbuildinfo
@@ -58,3 +62,9 @@ temp/
 *.wav
 *.mp3
 *.m4a
+
+# Next.js 빌드 출력물 무시
+.next
+.next/
+out/
+build/
