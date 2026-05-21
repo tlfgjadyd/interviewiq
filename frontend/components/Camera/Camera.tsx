@@ -17,7 +17,8 @@ const Camera: React.FC = () => {
     x: number;
     y: number;
   } | null>(null);
-  const { backendBaseUrl, session, setLatestVision } = useInterviewSession();
+  const { backendBaseUrl, session, isAnswerRecording, setLatestVision } =
+    useInterviewSession();
 
   useCamera(videoRef);
 
@@ -35,7 +36,7 @@ const Camera: React.FC = () => {
     notFacingRef,
     hasBadPostureRef
   } = useMediapipe(videoRef, canvasRef, overlayEnabled, {
-    enabled: session?.status === "active",
+    enabled: session?.status === "active" && isAnswerRecording,
     sessionId: session?.sessionId,
     answerTurnId: session?.answerTurnId,
     chunkMs: session?.chunkMs,

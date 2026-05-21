@@ -17,6 +17,7 @@ export type SessionCreatePayload = {
   chunkMs: number;
   cluster?: string | null;
   industry?: string | null;
+  totalQuestions: number;
 };
 
 export type InterviewSessionState = {
@@ -25,10 +26,14 @@ export type InterviewSessionState = {
   chunkMs: number;
   currentQuestion: string;
   questionIndex: number;
+  totalQuestions: number;
+  phase: string;
+  phaseGoal: string;
   questionHistory: string[];
   turnStartedAtMs: number;
   currentChunkIndex: number;
   status?: "active" | "finished";
+  reportId?: string | null;
 };
 
 export type AnswerFinishMetadata = {
@@ -41,14 +46,26 @@ type SessionCreateResponse = {
   sessionId: string;
   answerTurnId: string;
   firstQuestion: string;
+  firstQuestionSource?: string | null;
+  questionIndex: number;
+  totalQuestions: number;
+  phase: string;
+  phaseGoal: string;
 };
 
 type AnswerFinishResponse = {
   answerTurnId: string;
   status: "analysis_ready";
   nextQuestionPending: boolean;
-  nextAnswerTurnId: string;
-  nextQuestion: string;
+  nextAnswerTurnId: string | null;
+  nextQuestion: string | null;
+  nextQuestionSource?: string | null;
+  questionIndex: number;
+  totalQuestions: number;
+  phase: string;
+  phaseGoal: string;
+  sessionFinished: boolean;
+  reportId?: string | null;
 };
 
 type SessionFinishResponse = {
@@ -61,6 +78,7 @@ type InterviewSessionContextValue = {
   backendBaseUrl: string;
   session: InterviewSessionState | null;
   latestVision: InterviewBehaviorAnalysis | null;
+  isAnswerRecording: boolean;
   isCreatingSession: boolean;
   isFinishingAnswer: boolean;
   isFinishingSession: boolean;
@@ -72,6 +90,7 @@ type InterviewSessionContextValue = {
     metadata?: AnswerFinishMetadata
   ) => Promise<void>;
   finishSession: () => Promise<SessionFinishResponse | null>;
+  setAnswerRecording: (recording: boolean) => void;
   setLatestVision: (analysis: InterviewBehaviorAnalysis | null) => void;
 };
 
@@ -82,6 +101,7 @@ const DEFAULT_SESSION_PAYLOAD: SessionCreatePayload = {
   chunkMs: 5000,
   cluster: "large_manufacturing",
   industry: "semiconductor",
+  totalQuestions: 12,
 };
 
 const InterviewSessionContext =
@@ -113,6 +133,7 @@ export const InterviewSessionProvider = ({
   const [session, setSession] = useState<InterviewSessionState | null>(null);
   const [latestVision, setLatestVision] =
     useState<InterviewBehaviorAnalysis | null>(null);
+  const [isAnswerRecording, setIsAnswerRecording] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [isFinishingAnswer, setIsFinishingAnswer] = useState(false);
   const [isFinishingSession, setIsFinishingSession] = useState(false);
@@ -147,13 +168,18 @@ export const InterviewSessionProvider = ({
           answerTurnId: data.answerTurnId,
           chunkMs: requestPayload.chunkMs,
           currentQuestion: data.firstQuestion,
-          questionIndex: 0,
+          questionIndex: data.questionIndex,
+          totalQuestions: data.totalQuestions,
+          phase: data.phase,
+          phaseGoal: data.phaseGoal,
           questionHistory: [data.firstQuestion],
           turnStartedAtMs: performance.now(),
           currentChunkIndex: 0,
           status: "active",
+          reportId: null,
         });
         setLatestVision(null);
+        setIsAnswerRecording(false);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to create session";
@@ -208,12 +234,25 @@ export const InterviewSessionProvider = ({
         const data = (await response.json()) as AnswerFinishResponse;
 
         setSession((current) =>
-          current
+          current && data.sessionFinished
+            ? {
+                ...current,
+                status: "finished",
+                reportId: data.reportId ?? null,
+                questionIndex: data.questionIndex,
+                totalQuestions: data.totalQuestions,
+                phase: data.phase,
+                phaseGoal: data.phaseGoal,
+              }
+            : current && data.nextAnswerTurnId && data.nextQuestion
             ? {
                 ...current,
                 answerTurnId: data.nextAnswerTurnId,
                 currentQuestion: data.nextQuestion,
-                questionIndex: current.questionIndex + 1,
+                questionIndex: data.questionIndex,
+                totalQuestions: data.totalQuestions,
+                phase: data.phase,
+                phaseGoal: data.phaseGoal,
                 questionHistory: [...current.questionHistory, data.nextQuestion],
                 turnStartedAtMs: performance.now(),
                 currentChunkIndex: 0,
@@ -221,6 +260,7 @@ export const InterviewSessionProvider = ({
             : current
         );
         setLatestVision(null);
+        setIsAnswerRecording(false);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to finish answer";
@@ -263,10 +303,12 @@ export const InterviewSessionProvider = ({
           ? {
               ...current,
               status: "finished",
+              reportId: data.reportId,
             }
           : current
       );
       setLatestVision(null);
+      setIsAnswerRecording(false);
       return data;
     } catch (err) {
       const message =
@@ -289,6 +331,7 @@ export const InterviewSessionProvider = ({
         backendBaseUrl,
         session,
         latestVision,
+        isAnswerRecording,
         isCreatingSession,
         isFinishingAnswer,
         isFinishingSession,
@@ -296,6 +339,20 @@ export const InterviewSessionProvider = ({
         startSession,
         finishAnswer,
         finishSession,
+        setAnswerRecording: (recording) => {
+          setIsAnswerRecording(recording);
+          if (recording) {
+            setSession((current) =>
+              current
+                ? {
+                    ...current,
+                    turnStartedAtMs: performance.now(),
+                    currentChunkIndex: 0,
+                  }
+                : current
+            );
+          }
+        },
         setLatestVision,
       }}
     >

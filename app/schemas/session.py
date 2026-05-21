@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SessionCreate(BaseModel):
@@ -10,6 +10,7 @@ class SessionCreate(BaseModel):
     chunkMs: int = Field(default=5000, gt=0)
     cluster: str | None = None
     industry: str | None = None
+    totalQuestions: int = Field(default=12, ge=1, le=30)
 
 
 class SessionCreateResponse(BaseModel):
@@ -17,6 +18,10 @@ class SessionCreateResponse(BaseModel):
     answerTurnId: str
     firstQuestion: str
     firstQuestionSource: str | None = None
+    questionIndex: int
+    totalQuestions: int
+    phase: str
+    phaseGoal: str
 
 
 class AnswerFinishRequest(BaseModel):
@@ -32,9 +37,41 @@ class AnswerFinishResponse(BaseModel):
     answerTurnId: str
     status: Literal["analysis_ready"]
     nextQuestionPending: bool
-    nextAnswerTurnId: str
-    nextQuestion: str
+    nextAnswerTurnId: str | None
+    nextQuestion: str | None
     nextQuestionSource: str | None = None
+    questionIndex: int
+    totalQuestions: int
+    phase: str
+    phaseGoal: str
+    sessionFinished: bool = False
+    reportId: str | None = None
+
+
+class AnswerAudioMetadata(BaseModel):
+    answerTurnId: str
+    startedAt: int = Field(ge=0)
+    endedAt: int = Field(gt=0)
+    durationMs: int = Field(gt=0)
+    mimeType: str
+    language: str | None = None
+    browserTranscript: str | None = None
+    browserLatestText: str | None = None
+
+    @model_validator(mode="after")
+    def validate_time_order(self):
+        if self.endedAt <= self.startedAt:
+            raise ValueError("endedAt must be greater than startedAt")
+        return self
+
+
+class AnswerAudioResponse(BaseModel):
+    sessionId: str
+    answerTurnId: str
+    status: Literal["received"]
+    audioPath: str
+    mimeType: str
+    durationMs: int
 
 
 class NextQuestionResponse(BaseModel):
@@ -42,12 +79,23 @@ class NextQuestionResponse(BaseModel):
     answerTurnId: str
     question: str
     questionSource: str | None = None
+    questionIndex: int
+    totalQuestions: int
+    phase: str
+    phaseGoal: str
 
 
 class SessionFinishResponse(BaseModel):
     sessionId: str
     status: Literal["finished"]
     reportId: str
+
+
+class SessionReportResponse(BaseModel):
+    sessionId: str
+    reportId: str
+    status: Literal["ready"]
+    report: dict[str, Any]
 
 
 class SessionDocumentsRequest(BaseModel):

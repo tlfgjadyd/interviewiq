@@ -7,7 +7,6 @@ import { useMetrics } from "@/context/MetricsContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useInterviewSession } from "@/context/InterviewSessionContext";
-import { getChunkTimingByIndex } from "@/lib/chunking";
 
 type BrowserSpeechRecognition = {
   lang: string;
@@ -180,8 +179,14 @@ export function RealtimeAudio({
 }: {
   onDataChange?: (data: any, error: string | null) => void;
 }) {
-  const { backendBaseUrl, session, latestVision, finishAnswer, isFinishingAnswer } =
-    useInterviewSession();
+  const {
+    backendBaseUrl,
+    session,
+    latestVision,
+    finishAnswer,
+    isFinishingAnswer,
+    setAnswerRecording,
+  } = useInterviewSession();
   const [transcription, setTranscription] =
     useState<SimpleTranscriptionChunk | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -192,7 +197,8 @@ export function RealtimeAudio({
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunkIndexRef = useRef(0);
+  const answerAudioChunksRef = useRef<Blob[]>([]);
+  const answerAudioMimeTypeRef = useRef("audio/webm");
   const answerTranscriptRef = useRef("");
   const latestBrowserTranscriptRef = useRef("");
   const isEndingAnswerRef = useRef(false);
@@ -230,7 +236,8 @@ export function RealtimeAudio({
   }, [history]);
 
   useEffect(() => {
-    audioChunkIndexRef.current = 0;
+    answerAudioChunksRef.current = [];
+    answerAudioMimeTypeRef.current = "audio/webm";
     answerTranscriptRef.current = "";
     latestBrowserTranscriptRef.current = "";
     speechMetricsSessionRef.current = createSpeechMetricsSession();
@@ -283,7 +290,7 @@ export function RealtimeAudio({
     mediaStreamRef.current = stream;
     audioContextRef.current = audioContext;
     speechMetricsSessionRef.current = createSpeechMetricsSession();
-    startAudioChunkRecorder(stream);
+    startAnswerAudioRecorder(stream);
 
     const sampleAudio = () => {
       analyser.getFloatTimeDomainData(samples);
@@ -324,10 +331,10 @@ export function RealtimeAudio({
     sampleAudio();
   };
 
-  const sendAudioChunk = async (
+  const uploadAnswerAudio = async (
     audioBlob: Blob,
-    chunkIndex: number,
-    mimeType: string
+    mimeType: string,
+    browserTranscript: string
   ) => {
     const currentSession = sessionRef.current.session;
 
@@ -335,41 +342,41 @@ export function RealtimeAudio({
       return;
     }
 
-    const timing = getChunkTimingByIndex(chunkIndex, currentSession.chunkMs);
+    const metrics = calculateSpeechMetrics(
+      speechMetricsSessionRef.current,
+      browserTranscript,
+      language
+    );
+    const durationMs = Math.max(Math.round(metrics.durationSec * 1000), 1);
     const metadata = {
-      chunkId: timing.chunkId,
       answerTurnId: currentSession.answerTurnId,
-      t0: timing.t0,
-      t1: timing.t1,
+      startedAt: 0,
+      endedAt: durationMs,
+      durationMs,
       mimeType,
       language,
-      browserTranscript:
-        answerTranscriptRef.current || latestBrowserTranscriptRef.current,
+      browserTranscript,
       browserLatestText: latestBrowserTranscriptRef.current,
     };
     const formData = new FormData();
 
-    formData.append("audio", audioBlob, `${timing.chunkId}.webm`);
+    formData.append("audio", audioBlob, `${currentSession.answerTurnId}.webm`);
     formData.append("metadata", JSON.stringify(metadata));
 
-    try {
-      const response = await fetch(
-        `${sessionRef.current.backendBaseUrl}/api/sessions/${currentSession.sessionId}/audio-chunks`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`audio chunk failed: ${response.status}`);
+    const response = await fetch(
+      `${sessionRef.current.backendBaseUrl}/api/sessions/${currentSession.sessionId}/answers/${currentSession.answerTurnId}/audio`,
+      {
+        method: "POST",
+        body: formData,
       }
-    } catch (error) {
-      console.error("Failed to send audio chunk:", error);
+    );
+
+    if (!response.ok) {
+      throw new Error(`answer audio upload failed: ${response.status}`);
     }
   };
 
-  const startAudioChunkRecorder = (stream: MediaStream) => {
+  const startAnswerAudioRecorder = (stream: MediaStream) => {
     const currentSession = sessionRef.current.session;
 
     if (!currentSession || typeof MediaRecorder === "undefined") {
@@ -383,26 +390,46 @@ export function RealtimeAudio({
       ? new MediaRecorder(stream, { mimeType: preferredMimeType })
       : new MediaRecorder(stream);
 
-    audioChunkIndexRef.current = 0;
+    answerAudioChunksRef.current = [];
+    answerAudioMimeTypeRef.current =
+      recorder.mimeType || preferredMimeType || "audio/webm";
     recorder.ondataavailable = (event) => {
       if (!event.data || event.data.size === 0) {
         return;
       }
 
-      const chunkIndex = audioChunkIndexRef.current;
-      audioChunkIndexRef.current += 1;
-
-      void sendAudioChunk(
-        event.data,
-        chunkIndex,
-        recorder.mimeType || preferredMimeType || "audio/webm"
-      );
+      answerAudioChunksRef.current.push(event.data);
     };
     recorder.onerror = (event) => {
       console.error("MediaRecorder error:", event);
     };
-    recorder.start(currentSession.chunkMs);
+    recorder.start();
     mediaRecorderRef.current = recorder;
+  };
+
+  const stopRecorderAndBuildAnswerAudio = async () => {
+    const recorder = mediaRecorderRef.current;
+
+    if (!recorder || recorder.state === "inactive") {
+      return new Blob(answerAudioChunksRef.current, {
+        type: answerAudioMimeTypeRef.current,
+      });
+    }
+
+    await new Promise<void>((resolve) => {
+      const handleStop = () => {
+        recorder.removeEventListener("stop", handleStop);
+        resolve();
+      };
+
+      recorder.addEventListener("stop", handleStop);
+      recorder.stop();
+    });
+
+    mediaRecorderRef.current = null;
+    return new Blob(answerAudioChunksRef.current, {
+      type: answerAudioMimeTypeRef.current,
+    });
   };
 
   const findAnswerEndPhrase = (text: string) => {
@@ -496,14 +523,16 @@ export function RealtimeAudio({
     isEndingAnswerRef.current = true;
 
     try {
-      const recorder = mediaRecorderRef.current;
-      if (recorder && recorder.state === "recording") {
-        recorder.requestData();
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-
       const browserTranscript =
         answerTranscriptRef.current || latestBrowserTranscriptRef.current;
+      const answerAudioBlob = await stopRecorderAndBuildAnswerAudio();
+      if (answerAudioBlob.size > 0) {
+        await uploadAnswerAudio(
+          answerAudioBlob,
+          answerAudioMimeTypeRef.current,
+          browserTranscript
+        );
+      }
       const speechMetrics = calculateSpeechMetrics(
         speechMetricsSessionRef.current,
         browserTranscript,
@@ -515,6 +544,7 @@ export function RealtimeAudio({
         language,
         speechMetrics,
       });
+      stopStreaming();
     } catch (err) {
       console.error("Failed to finish answer by voice command:", err);
       setError(
@@ -534,14 +564,16 @@ export function RealtimeAudio({
     isEndingAnswerRef.current = true;
 
     try {
-      const recorder = mediaRecorderRef.current;
-      if (recorder && recorder.state === "recording") {
-        recorder.requestData();
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-
       const browserTranscript =
         answerTranscriptRef.current || latestBrowserTranscriptRef.current;
+      const answerAudioBlob = await stopRecorderAndBuildAnswerAudio();
+      if (answerAudioBlob.size > 0) {
+        await uploadAnswerAudio(
+          answerAudioBlob,
+          answerAudioMimeTypeRef.current,
+          browserTranscript
+        );
+      }
       const speechMetrics = calculateSpeechMetrics(
         speechMetricsSessionRef.current,
         browserTranscript,
@@ -553,6 +585,7 @@ export function RealtimeAudio({
         language,
         speechMetrics,
       });
+      stopStreaming();
     } catch (err) {
       console.error("Failed to finish answer by button:", err);
       setError(
@@ -688,6 +721,7 @@ export function RealtimeAudio({
 
       setIsStreaming(true);
       isStreamingRef.current = true;
+      setAnswerRecording(true);
     } catch (err) {
       console.error("audio stream failed:", err);
       const errorMessage =
@@ -714,6 +748,7 @@ export function RealtimeAudio({
 
     setIsStreaming(false);
     isStreamingRef.current = false;
+    setAnswerRecording(false);
   };
 
   useEffect(() => {
@@ -751,6 +786,59 @@ export function RealtimeAudio({
     setError(null);
 
     try {
+      if (session?.status === "finished") {
+        const response = await fetch(
+          `${backendBaseUrl}/api/sessions/${session.sessionId}/report`
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data?.detail || "Failed to load backend report");
+        }
+
+        const report = data.report;
+        const message = [
+          `총 ${report.answeredQuestions}/${report.totalQuestions}개 질문 답변 완료`,
+          "",
+          "전체 요약",
+          ...(report.overallSummary ?? []),
+          "",
+          "종합 피드백",
+          report.overallFeedback?.content,
+          report.overallFeedback?.nonverbal,
+          "",
+          "개선 포인트",
+          ...(report.overallFeedback?.improvementPoints ?? []).map(
+            (point: string, index: number) => `${index + 1}. ${point}`
+          ),
+          "",
+          "다음 연습",
+          report.nextPractice?.recommendedQuestion,
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        setSummary(message);
+
+        if (reportWindow) {
+          const reportKey = `interviewiq-summary-${Date.now()}`;
+          localStorage.setItem(
+            reportKey,
+            JSON.stringify({
+              summary: message,
+              history: reportHistory,
+              metrics,
+              language,
+              createdAt: new Date().toISOString(),
+            })
+          );
+          reportWindow.location.href = `/summary?key=${encodeURIComponent(
+            reportKey
+          )}`;
+        }
+        return;
+      }
+
       const response = await fetch("/api/openai", {
         method: "POST",
         headers: {
@@ -1005,7 +1093,7 @@ export function RealtimeAudio({
             Current Question
           </span>
           <Badge className="bg-white text-blue-700 hover:bg-white">
-            {session ? `Q${session.questionIndex + 1}` : "Ready"}
+            {session ? `Q${session.questionIndex}/${session.totalQuestions}` : "Ready"}
           </Badge>
         </div>
         <p className="mt-2 text-base font-semibold leading-7 text-slate-950">

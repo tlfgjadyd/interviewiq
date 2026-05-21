@@ -65,6 +65,7 @@ session_payload = {
     "chunkMs": 5000,
     "cluster": "large_manufacturing",
     "industry": "semiconductor",
+    "totalQuestions": 1,
 }
 r = requests.post(f"{BASE_URL}/api/sessions", json=session_payload)
 r.raise_for_status()
@@ -414,7 +415,37 @@ for vchunk in VISION_CHUNKS:
     pretty(ack)
 
 
-# ── 5. 답변 종료 ───────────────────────────────────────────
+# ── 4-1. answer 단위 audio 전송 ────────────────────────────
+step("4-1. answer audio 1개 전송  POST /api/sessions/{id}/answers/{turn}/audio")
+answer_audio_metadata = {
+    "answerTurnId": answer_turn_id,
+    "startedAt": 0,
+    "endedAt": 15000,
+    "durationMs": 15000,
+    "mimeType": "audio/webm",
+    "language": "ko",
+    "browserTranscript": (
+        "저는 팀 프로젝트에서 백엔드를 맡아 REST API 응답 속도를 개선했고 "
+        "PostgreSQL 인덱스와 Redis 캐싱을 적용했습니다."
+    ),
+}
+answer_audio = io.BytesIO(b"dummy answer-level audio bytes")
+files = {
+    "audio": ("answer.webm", answer_audio, "audio/webm"),
+}
+data = {
+    "metadata": json.dumps(answer_audio_metadata),
+}
+r = requests.post(
+    f"{BASE_URL}/api/sessions/{session_id}/answers/{answer_turn_id}/audio",
+    files=files,
+    data=data,
+)
+r.raise_for_status()
+pretty(r.json())
+
+
+# ── 5. speech chunk 전송 ───────────────────────────────────
 SPEECH_CHUNKS = [
     {
         "chunkId": "c_001",
@@ -502,6 +533,13 @@ r.raise_for_status()
 pretty(r.json())
 
 
+# ── 8-1. 최종 리포트 조회 ─────────────────────────────────
+step("8-1. 최종 리포트 조회  GET /api/sessions/{id}/report")
+r = requests.get(f"{BASE_URL}/api/sessions/{session_id}/report")
+r.raise_for_status()
+pretty(r.json())
+
+
 # ── 9. Redis 저장 chunk 전체 조회 ──────────────────────────
 step("9. Redis 저장 chunk 전체 조회  GET /api/sessions/{id}/chunks")
 r = requests.get(f"{BASE_URL}/api/sessions/{session_id}/chunks")
@@ -532,5 +570,7 @@ step("완료 — Redis 직접 확인하려면 아래 명령 실행")
 print(f"  redis-cli GET \"session:{session_id}:chunk:c_001\"")
 print(f"  redis-cli SMEMBERS \"session:{session_id}:answer:{answer_turn_id}:chunks\"")
 print(f"  redis-cli GET \"session:{session_id}:meta\"")
+print(f"  redis-cli GET \"session:{session_id}:answer:{answer_turn_id}:audio\"")
+print(f"  redis-cli GET \"session:{session_id}:report\"")
 print(f"  redis-cli GET \"session:{session_id}:documents\"")
 print(f"  redis-cli LRANGE \"session:{session_id}:rag:documents\" 0 -1")

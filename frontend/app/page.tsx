@@ -46,8 +46,8 @@ function InterviewWorkspace() {
     id: `Q${index + 1}`,
     label: index === 0 ? "첫 질문" : "꼬리 질문",
     question,
-    status: index < activeQuestionIndex ? "완료" : "현재",
-    tone: (index < activeQuestionIndex ? "green" : "blue") as StatusTone,
+    status: index + 1 < activeQuestionIndex ? "완료" : "현재",
+    tone: (index + 1 < activeQuestionIndex ? "green" : "blue") as StatusTone,
   }));
 
   return (
@@ -129,7 +129,7 @@ function InterviewWorkspace() {
               <h1 className="text-xl font-semibold">InterviewIQ Mock Interview</h1>
               <p className="mt-1 truncate text-xs text-slate-500">
                 {session
-                  ? `Q${activeQuestionIndex + 1} 진행 중 / sessionId=${session.sessionId}`
+                  ? `Q${activeQuestionIndex}/${session.totalQuestions} 진행 중 / sessionId=${session.sessionId}`
                   : "Start Session 이후 음성, 시선, 자세 신호를 수집합니다."}
               </p>
               {latestVision && (

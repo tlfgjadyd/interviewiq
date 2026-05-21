@@ -16,7 +16,9 @@ QUESTION_INSTRUCTIONS = """
 - 지원자를 압박하거나 평가를 단정하지 않습니다.
 - 자기소개서나 채용공고의 구체 키워드를 자연스럽게 반영합니다.
 - 첫 질문은 답변을 유도하는 넓은 질문으로 만듭니다.
+- interviewProgress가 있으면 현재 phase와 phaseGoal에 맞는 질문을 만듭니다.
 - 꼬리질문은 직전 답변에서 모호한 역할, 기술 선택 근거, 결과 지표를 확인합니다.
+- 마지막 질문 구간에서는 사용자가 핵심 강점이나 마무리 발언을 정리할 수 있게 묻습니다.
 - 비언어 신호는 질문의 보조 맥락으로만 사용하고, 긴장/불안처럼 감정을 단정하지 않습니다.
 """.strip()
 
@@ -49,6 +51,7 @@ class QuestionGenerator:
         job_summary: dict[str, Any] | None = None,
         match_keywords: list[str] | None = None,
         fallback_question: str,
+        interview_progress: dict[str, Any] | None = None,
     ) -> GeneratedQuestion:
         if not self.enabled:
             return GeneratedQuestion(text=fallback_question, source="fallback_disabled")
@@ -62,6 +65,7 @@ class QuestionGenerator:
             "jobSummary": job_summary or {},
             "matchKeywords": match_keywords or [],
             "ragContext": rag_context,
+            "interviewProgress": interview_progress or {},
             "fallbackQuestion": fallback_question,
         }
         return self._generate_question(prompt, fallback_question)
@@ -77,6 +81,7 @@ class QuestionGenerator:
         rag_context: list[dict[str, Any]],
         nonverbal_feedback: dict[str, Any] | None,
         fallback_question: str,
+        interview_progress: dict[str, Any] | None = None,
     ) -> GeneratedQuestion:
         if not self.enabled:
             return GeneratedQuestion(text=fallback_question, source="fallback_disabled")
@@ -90,6 +95,7 @@ class QuestionGenerator:
             "answerText": answer_text,
             "ragContext": rag_context,
             "nonverbalFeedback": nonverbal_feedback or {},
+            "interviewProgress": interview_progress or {},
             "fallbackQuestion": fallback_question,
         }
         return self._generate_question(prompt, fallback_question)
