@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from app.core.redis import REDIS_TTL_SECONDS, get_redis
 from app.llm import QuestionGenerator
 from app.llm.question_generator import GeneratedQuestion
+from app.llm.transcriber import AudioTranscriber
 from app.rag import RagRetriever
 from app.rag.schema import RagDocument, RagMetadata
 from app.schemas.chunk import (
@@ -38,6 +39,7 @@ from app.schemas.session import (
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 rag_retriever = RagRetriever()
 question_generator = QuestionGenerator()
+audio_transcriber = AudioTranscriber()
 TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣+#.]+")
 SKILL_KEYWORDS = [
     "python",
@@ -607,6 +609,7 @@ def _build_session_report(
                 "phaseGoal": progress.get("phaseGoal"),
                 "answerText": analysis.get("answerText", ""),
                 "answerTextSource": analysis.get("answerTextSource"),
+                "transcription": analysis.get("transcription"),
                 "contentFeedback": analysis.get("contentFeedback", []),
                 "nonverbalFeedback": analysis.get("nonverbalFeedback", {}),
                 "endedBy": analysis.get("endedBy"),
@@ -968,12 +971,40 @@ async def finish_answer(
     meta = await _ensure_session(session_id)
     chunks = await _load_answer_chunks(session_id, answer_turn_id)
     answer_audio = await _read_json(_answer_audio_key(session_id, answer_turn_id))
-    answer_text = " ".join(
+    transcription = None
+    if answer_audio:
+        audio_metadata = (
+            answer_audio.get("audioMetadata", {})
+            if isinstance(answer_audio.get("audioMetadata"), dict)
+            else {}
+        )
+        transcription = await audio_transcriber.transcribe_answer_audio(
+            audio_path=answer_audio.get("audioPath"),
+            language=payload.language or audio_metadata.get("language"),
+        )
+        answer_audio["transcription"] = {
+            "text": transcription.text,
+            "source": transcription.source,
+            "model": transcription.model,
+            "error": transcription.error,
+        }
+        answer_audio["status"] = {
+            **answer_audio.get("status", {}),
+            "speechReady": bool(transcription.text.strip()),
+        }
+        await _write_json(_answer_audio_key(session_id, answer_turn_id), answer_audio)
+
+    speech_chunk_text = " ".join(
         chunk.get("speech", {}).get("text", "")
         for chunk in chunks
         if isinstance(chunk.get("speech"), dict)
     ).strip()
-    answer_text_source = "speech_chunks"
+
+    answer_text = transcription.text.strip() if transcription else ""
+    answer_text_source = transcription.source if answer_text and transcription else "none"
+    if not answer_text and speech_chunk_text:
+        answer_text = speech_chunk_text
+        answer_text_source = "speech_chunks"
     if not answer_text and payload.browserTranscript:
         answer_text = payload.browserTranscript.strip()
         answer_text_source = "browser_speech_recognition"
@@ -1035,6 +1066,16 @@ async def finish_answer(
         "speechMetrics": payload.speechMetrics,
         "browserTranscript": payload.browserTranscript,
         "answerAudio": answer_audio,
+        "transcription": (
+            {
+                "text": transcription.text,
+                "source": transcription.source,
+                "model": transcription.model,
+                "error": transcription.error,
+            }
+            if transcription
+            else None
+        ),
         "answerText": answer_text,
         "answerTextSource": answer_text_source,
         "chunkCount": len(chunks),
@@ -1043,7 +1084,7 @@ async def finish_answer(
         "ragContext": rag_context,
         "contentFeedback": [
             "답변에는 본인의 역할, 기술 선택 이유, 결과 지표가 포함될수록 좋습니다.",
-            "STT가 연결되면 이 항목은 실제 답변 텍스트 기반으로 더 구체화됩니다.",
+            "전사된 답변 텍스트를 기준으로 답변의 구체성과 구조를 점검합니다.",
         ],
         "nonverbalFeedback": nonverbal,
         "nextAnswerTurnId": next_answer_turn_id,

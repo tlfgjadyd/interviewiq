@@ -1,15 +1,16 @@
 # InterviewIQ
 
-InterviewIQ는 AI 모의 면접 코칭 프로젝트다. 프론트엔드는 면접 중 웹캠과 마이크 데이터를 수집하고, 5초 단위 chunk를 백엔드로 전송한다. 백엔드는 이 데이터를 `sessionId + answerTurnId + chunkId` 기준으로 Redis에 저장하고, 답변 단위로 분석한다.
+InterviewIQ는 AI 모의 면접 코칭 프로젝트다. 프론트엔드는 면접 중 웹캠 데이터를 답변 중 5초 단위로 전송하고, 마이크 녹음은 답변 단위 audio 파일로 백엔드에 업로드한다. 백엔드는 이 데이터를 `sessionId + answerTurnId` 기준으로 Redis에 저장하고, 답변 단위로 분석한다.
 
 현재 목표는 다음과 같다.
 
 - 프론트엔드의 `vision_v2` chunk 수신
-- `MediaRecorder` 기반 5초 audio chunk 수신
+- `MediaRecorder` 기반 answer audio 수신
 - Redis에 chunk 데이터 병합 저장
-- 브라우저 `SpeechRecognition` 결과를 임시 답변 텍스트로 활용
+- OpenAI STT 결과를 최종 답변 텍스트로 우선 활용
+- 브라우저 `SpeechRecognition` 결과를 fallback 답변 텍스트로 활용
 - 답변 종료 후 다음 질문 또는 꼬리질문 생성
-- 이후 OpenAI STT, 음성 정밀 분석, 최종 리포트 기능을 붙일 수 있는 구조 유지
+- 이후 음성 정밀 분석과 최종 리포트 고도화를 붙일 수 있는 구조 유지
 
 ## 프로젝트 구조
 
@@ -27,9 +28,9 @@ backend/
 ```text
 Start Session
 -> 답변 시작
--> 프론트가 vision/audio chunk 전송
--> 답변 종료
--> 백엔드가 다음 질문 생성
+-> 프론트가 답변 중 vision chunk 수집
+-> 답변 종료 시 answer audio 업로드
+-> 백엔드가 STT 후 다음 질문 생성
 -> 반복
 -> End Interview
 -> 백엔드 세션 종료
@@ -81,6 +82,7 @@ pip install -r requirements.txt
 DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/interviewiq
 REDIS_URL=redis://localhost:6379
 OPENAI_API_KEY=sk-...
+OPENAI_STT_MODEL=gpt-4o-mini-transcribe
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_QUESTION_MODEL=openai/gpt-4o-mini
@@ -91,7 +93,7 @@ ENABLE_LLM_QUESTION_GENERATION=false
 
 - `ENABLE_LLM_QUESTION_GENERATION=false`이면 비용을 쓰지 않고 fallback 질문을 생성한다.
 - 현재 질문 생성은 OpenAI 호환 클라이언트로 OpenRouter를 호출하는 구조다.
-- 실제 OpenAI STT는 아직 연결되어 있지 않다.
+- 답변 단위 오디오가 업로드된 경우 `OPENAI_STT_MODEL`로 OpenAI STT를 수행하고, 실패하면 브라우저 전사 또는 기존 speech chunk를 fallback으로 사용한다.
 
 ### Redis 실행
 
@@ -171,19 +173,21 @@ NEXT_PUBLIC_BACKEND_URL이 비어 있으면 FastAPI 백엔드가 아니라 프�
 | GET    | `/api/sessions/{sessionId}/documents`                       | 세션 문서 조회                   |
 | GET    | `/api/sessions/{sessionId}/next-question`                   | 현재 질문 조회                   |
 | POST   | `/api/sessions/{sessionId}/vision-chunks`                   | `vision_v2` chunk 수신           |
-| POST   | `/api/sessions/{sessionId}/audio-chunks`                    | audio chunk 수신                 |
+| POST   | `/api/sessions/{sessionId}/answers/{answerTurnId}/audio`    | answer audio 수신                |
+| POST   | `/api/sessions/{sessionId}/audio-chunks`                    | 호환용 audio chunk 수신          |
 | POST   | `/api/sessions/{sessionId}/speech-chunks`                   | 개발용 speech chunk 입력         |
 | POST   | `/api/sessions/{sessionId}/answers/{answerTurnId}/finish`   | 현재 답변 종료 및 다음 질문 생성 |
 | GET    | `/api/sessions/{sessionId}/answers/{answerTurnId}/status`   | 답변 chunk 수집 상태 조회        |
 | GET    | `/api/sessions/{sessionId}/answers/{answerTurnId}/analysis` | 답변 분석 결과 조회              |
 | GET    | `/api/sessions/{sessionId}/chunks`                          | 세션 전체 chunk 조회             |
+| GET    | `/api/sessions/{sessionId}/report`                          | 최종 리포트 조회                 |
 | POST   | `/api/sessions/{sessionId}/finish`                          | 전체 면접 세션 종료              |
 | POST   | `/api/rag/search`                                           | RAG 검색 디버깅                  |
 | POST   | `/api/rag/reload`                                           | RAG 데이터 다시 로드             |
 
 ## Chunk 저장 구조
 
-Redis에는 다음 key로 chunk가 저장된다.
+Vision chunk와 호환용 audio chunk는 다음 key로 저장된다.
 
 ```text
 session:{sessionId}:answer:{answerTurnId}:chunk:{chunkId}
@@ -199,6 +203,7 @@ session:{sessionId}:answer:{answerTurnId}:chunks
 
 ```text
 %TEMP%/interviewiq_audio/{sessionId}_{answerTurnId}_{chunkId}.webm
+%TEMP%/interviewiq_audio/answers/{sessionId}_{answerTurnId}.webm
 ```
 
 백엔드에 병합 저장되는 chunk 예시:
@@ -235,36 +240,29 @@ session:{sessionId}:answer:{answerTurnId}:chunks
 
 ## 현재 STT 정책
 
-아직 백엔드 OpenAI STT는 연결되어 있지 않다.
+답변 종료 시 저장된 answer audio가 있으면 OpenAI STT를 먼저 호출한다.
+기본 모델은 `gpt-4o-mini-transcribe`다.
 
 현재는 다음 우선순위로 답변 텍스트를 만든다.
 
 ```text
-1. speech chunk가 있으면 speech.text 사용
-2. speech chunk가 없으면 finish 요청의 browserTranscript를 answerText fallback으로 사용
+1. answer audio OpenAI STT 성공 결과
+2. 개발용 speech chunk가 있으면 speech.text 사용
+3. finish 요청의 browserTranscript
+4. answer audio metadata의 browserTranscript
 ```
 
-나중에 STT를 붙이면 다음 정책을 권장한다.
-
-```text
-1. 백엔드 OpenAI STT 결과를 최종 answerText로 사용
-2. 브라우저 SpeechRecognition text는 임시 표시, prompt 참고, 디버그, fallback 용도로만 사용
-```
-
-추천 우선순위:
+저장되는 대표 source:
 
 ```text
 OpenAI STT 성공:
-answerTextSource = openai_stt
-answerTextStatus = final
+answerTextSource = openai_transcription
 
 OpenAI STT 실패 + browser text 있음:
 answerTextSource = browser_speech_recognition
-answerTextStatus = fallback
 
-OpenAI STT 진행 중:
-answerTextSource = browser_speech_recognition
-answerTextStatus = provisional
+OpenAI STT 실패 + speech chunk 있음:
+answerTextSource = speech_chunks
 ```
 
 ## 백엔드 원안과 현재 프론트 chunk 차이
@@ -275,7 +273,7 @@ answerTextStatus = provisional
 - event 시간 필드: `startMs/endMs`
 - `vision.quality` 포함
 - `realtimeAudioSignals` 포함 가능
-- 백엔드 STT 결과로 `speech` 생성 예정
+- 백엔드 STT 결과를 answer analysis의 `transcription`과 `answerText`에 저장
 
 현재 프론트 실제 전송:
 
@@ -283,7 +281,7 @@ answerTextStatus = provisional
 - event 시간 필드: `t0/t1`
 - `vision.quality`는 아직 없음
 - `realtimeAudioSignals`는 vision chunk에 아직 붙지 않음
-- browser transcript를 audio metadata와 answer finish body에 전송
+- browser transcript를 audio metadata와 answer finish body에 fallback 용도로 전송
 
 현재 백엔드는 가능한 범위에서 원안과 프론트 실제 구조를 모두 받을 수 있게 열어둔 상태다.
 
@@ -299,15 +297,14 @@ answerTextStatus = provisional
 
 ## 남은 작업
 
-- OpenAI STT 연동
-- answer 단위 audio chunk 병합
+- 실제 녹음 파일로 OpenAI STT E2E 테스트
+- answer 단위 audio 정밀 feature 분석
 - 백엔드 음성 feature 분석
 - 프론트 `vision.quality` 추가
 - 침묵 기반 답변 종료 UX 추가
 - 키보드 단축키 기반 답변 종료 UX 추가
 - TTS를 질문 읽어주기에 연결
-- 프론트 임시 `Interview Summary`를 백엔드 report API로 대체
-- `End Interview` 이후 최종 리포트 생성
+- 최종 리포트 내용 고도화
 
 ## 검증 명령
 

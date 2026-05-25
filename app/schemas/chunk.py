@@ -178,7 +178,13 @@ class SpeechChunkCreate(BaseModel):
     answerTurnId: str
     text: str
     segments: list[SpeechSegment] = Field(default_factory=list)
-    source: Literal["manual_test", "browser_stt", "openai_whisper", "local_whisper"] = "manual_test"
+    source: Literal[
+        "manual_test",
+        "browser_stt",
+        "openai_whisper",
+        "openai_transcription",
+        "local_whisper",
+    ] = "manual_test"
 
 
 class ChunkStatus(BaseModel):
