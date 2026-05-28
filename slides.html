@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>InterviewIQ — 방향 정리 (2026-05-25)</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
+<style>
+  :root {
+    --bg: #f7f8fb;
+    --surface: #ffffff;
+    --ink: #111827;
+    --ink-soft: #374151;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --brand: #2563eb;
+    --brand-soft: #dbeafe;
+    --accent: #059669;
+    --accent-soft: #d1fae5;
+    --warn: #b45309;
+    --warn-soft: #fef3c7;
+    --danger: #b91c1c;
+    --danger-soft: #fee2e2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Pretendard', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .deck {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    padding: 64px 88px 96px;
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+    animation: fade .25s ease;
+  }
+  .slide.active { display: flex; }
+
+  @keyframes fade {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .eyebrow {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    color: var(--brand);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  h1 {
+    font-size: 44px;
+    line-height: 1.2;
+    font-weight: 800;
+    margin: 0 0 8px;
+    letter-spacing: -0.02em;
+  }
+  h2 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    margin: 0 0 32px;
+  }
+  h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0 0 12px;
+    color: var(--ink);
+  }
+
+  p { color: var(--ink-soft); line-height: 1.6; margin: 0 0 12px; font-size: 16px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 24px 26px;
+  }
+  .card.brand  { border-color: #bfdbfe; background: #f5f9ff; }
+  .card.accent { border-color: #a7f3d0; background: #f3fbf7; }
+  .card.warn   { border-color: #fcd34d; background: #fffbeb; }
+  .card.muted  { background: #fafafa; }
+
+  .badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 12px;
+  }
+  .badge.before { background: var(--warn-soft); color: var(--warn); }
+  .badge.after  { background: var(--accent-soft); color: var(--accent); }
+  .badge.brand  { background: var(--brand-soft); color: var(--brand); }
+  .badge.danger { background: var(--danger-soft); color: var(--danger); }
+
+  ul { margin: 0; padding-left: 20px; color: var(--ink-soft); line-height: 1.75; font-size: 15.5px; }
+  ul li { margin-bottom: 6px; }
+  ul.tight li { margin-bottom: 2px; }
+  ul.plain { list-style: none; padding: 0; }
+  ul.plain li { padding-left: 18px; position: relative; }
+  ul.plain li::before {
+    content: ""; position: absolute; left: 2px; top: 11px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--brand);
+  }
+
+  .flow {
+    display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .flow .step {
+    flex: 1 1 0;
+    min-width: 120px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 14px;
+    font-size: 14px;
+    color: var(--ink);
+    font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+  }
+  .flow .arrow {
+    display: flex; align-items: center; color: var(--muted); font-weight: 700;
+  }
+  .flow .step.brand { background: #eff6ff; border-color: #bfdbfe; color: var(--brand); }
+  .flow .step.accent { background: #ecfdf5; border-color: #a7f3d0; color: var(--accent); }
+
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    font-size: 15px;
+  }
+  th, td {
+    text-align: left;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-soft);
+    vertical-align: top;
+    line-height: 1.55;
+  }
+  tr:last-child td { border-bottom: none; }
+  th {
+    background: #f9fafb;
+    color: var(--ink);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: .02em;
+  }
+  td.label { font-weight: 700; color: var(--ink); width: 18%; }
+  td.before { background: #fffdf5; }
+  td.after  { background: #f4fbf7; color: var(--ink); font-weight: 600; }
+
+  .kpi {
+    display: flex; gap: 16px; margin-top: 4px;
+  }
+  .kpi .k {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .kpi .k .v {
+    font-size: 28px; font-weight: 800; color: var(--brand);
+    letter-spacing: -0.01em;
+  }
+  .kpi .k .l { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  .hr {
+    height: 1px; background: var(--line); margin: 20px 0;
+  }
+
+  .footer {
+    position: absolute;
+    bottom: 22px;
+    left: 88px;
+    right: 88px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .footer .brand-mark {
+    font-weight: 800;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .footer .brand-mark span { color: var(--brand); }
+
+  .nav {
+    position: fixed;
+    bottom: 22px;
+    right: 88px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    z-index: 10;
+  }
+  .nav button {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    width: 34px; height: 34px;
+    cursor: pointer;
+    color: var(--ink-soft);
+    font-size: 16px;
+    line-height: 1;
+  }
+  .nav button:hover { background: #eef2ff; border-color: #c7d2fe; }
+  .nav .counter {
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--muted);
+    margin-right: 8px;
+  }
+
+  .progress {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: transparent;
+    z-index: 10;
+  }
+  .progress .bar {
+    height: 100%;
+    background: var(--brand);
+    width: 0%;
+    transition: width .25s ease;
+  }
+
+  .cover {
+    justify-content: center;
+    align-items: flex-start;
+  }
+  .cover h1 { font-size: 56px; }
+  .cover .meta {
+    margin-top: 24px;
+    color: var(--muted);
+    font-size: 15px;
+    display: flex; gap: 18px;
+  }
+  .cover .meta span { display: inline-flex; gap: 6px; }
+  .cover .meta b { color: var(--ink-soft); font-weight: 600; }
+
+  .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .tag {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px;
+    background: #eef2ff; color: var(--brand); font-weight: 600;
+  }
+
+  .callout {
+    margin-top: 16px;
+    padding: 16px 20px;
+    border-left: 3px solid var(--brand);
+    background: #f5f9ff;
+    border-radius: 8px;
+    color: var(--ink-soft);
+    font-size: 15px;
+    line-height: 1.65;
+  }
+  .callout.accent { border-left-color: var(--accent); background: #f3fbf7; }
+  .callout.warn   { border-left-color: var(--warn);   background: #fffbeb; }
+
+  .section-list { display: grid; gap: 10px; }
+  .section-list .row {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 14px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    align-items: center;
+  }
+  .section-list .row .n {
+    font-weight: 800; color: var(--brand);
+    font-variant-numeric: tabular-nums;
+  }
+  .section-list .row .t { font-weight: 600; color: var(--ink); }
+
+  .mvp-list {
+    display: grid; gap: 8px;
+  }
+  .mvp-list .item {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    font-size: 15px;
+    color: var(--ink-soft);
+  }
+  .mvp-list .item.in  { border-left: 4px solid var(--accent); }
+  .mvp-list .item.out { border-left: 4px solid var(--muted); opacity: .85; }
+  .mvp-list .item .mark { font-weight: 700; min-width: 36px; }
+  .mvp-list .item.in .mark  { color: var(--accent); }
+  .mvp-list .item.out .mark { color: var(--muted); }
+
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #f1f5f9;
+    color: #0f172a;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 13.5px;
+  }
+</style>
+</head>
+<body>
+
+<div class="progress"><div class="bar" id="progressBar"></div></div>
+
+<div class="deck" id="deck">
+
+  <!-- 1. Cover / 개요 -->
+  <section class="slide cover active">
+    <div class="eyebrow">InterviewIQ · Capstone Design</div>
+    <h1>면접 1회 평가에서<br/>개인 기준선 기반 <span style="color:var(--brand)">교정 루프</span>로</h1>
+    <h2 style="margin-top:16px; max-width: 880px;">
+      AI가 사용자를 평가하는 면접관이 아니라, 첫 면접을 baseline으로 저장하고
+      반복 연습에서 자세·시선·침묵·음성 습관이 어떻게 변화했는지 보여주는
+      개인화 면접 코칭 서비스
+    </h2>
+
+    <div class="tag-row" style="margin-top: 28px;">
+      <span class="tag">멀티모달</span>
+      <span class="tag">MediaPipe</span>
+      <span class="tag">Whisper STT</span>
+      <span class="tag">RAG + LangGraph</span>
+      <span class="tag">Baseline → Correction Loop</span>
+    </div>
+
+    <div class="meta">
+      <span><b>회의일</b> 2026-05-25</span>
+      <span><b>문서 타입</b> 팀 공유용 정리</span>
+      <span><b>범위</b> 기존 방향 vs 새 방향 / MVP</span>
+    </div>
+  </section>
+
+  <!-- 2. 프로젝트 개요 -->
+  <section class="slide">
+    <div class="eyebrow">01 · 프로젝트 개요</div>
+    <h1>InterviewIQ란?</h1>
+    <h2>혼자서도 모의 면접을 진행하고, 답변 내용과 비언어 행동을 함께 분석받는 실시간 멀티모달 면접 코칭 서비스</h2>
+
+    <div class="grid-2" style="margin-top: 8px;">
+      <div class="card brand">
+        <h3>핵심 차별점</h3>
+        <ul class="plain">
+          <li>최종 답변만 평가하지 않고, 면접 중 데이터를 <b>5초 chunk</b>로 저장·분석</li>
+          <li>웹캠 전신 비언어 + 마이크 음성 + STT 텍스트를 <b>chunkId 기준 병합</b></li>
+          <li>답변 단위(answer turn)로 묶어 꼬리질문/리포트 생성</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>데이터 흐름</h3>
+        <div class="flow">
+          <div class="step">질문</div><div class="arrow">→</div>
+          <div class="step">답변</div><div class="arrow">→</div>
+          <div class="step brand">vision / audio chunk</div>
+          <div class="arrow">→</div>
+          <div class="step">병합·분석</div>
+          <div class="arrow">→</div>
+          <div class="step accent">다음 질문 / 리포트</div>
+        </div>
+        <div class="callout">
+          프론트: MediaPipe 전신 feature + 5초 vision chunk · 오디오 파일 전송<br/>
+          백엔드: FastAPI · Redis 병합 · Whisper · librosa · RAG · LangGraph · PostgreSQL
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. 기존 계획 방향 -->
+  <section class="slide">
+    <div class="eyebrow">02 · 기존 계획 방향</div>
+    <h1>1회 면접 → 멀티모달 분석 → 리포트</h1>
+    <h2>0521 ACTION_PLAN, PROJECT_CONTEXT 기준의 기존 설계</h2>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3>서비스 컨셉</h3>
+        <ul class="plain">
+          <li>한 번의 모의 면접을 진행하고, 답변 내용·비언어·음성을 분석</li>
+          <li>다음 질문/꼬리질문을 생성하고, 종료 시 <b>최종 리포트</b> 제공</li>
+          <li>AI 면접관이 답변 적절성을 직접 평가하는 구조</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>기술 스택 / 파이프라인</h3>
+        <ul class="plain">
+          <li>Frontend: Next.js · MediaPipe · 5초 vision chunk · audio chunk</li>
+          <li>Backend: FastAPI · Redis · Whisper · librosa</li>
+          <li>분석: RAG(기업/직무/공통) + LangGraph 5개 agent</li>
+          <li>저장: 세션 종료 시 PostgreSQL 영구화</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="hr"></div>
+
+    <h3>기존 6주차 로드맵</h3>
+    <div class="flow">
+      <div class="step">1주<br/><span style="font-weight:400;color:var(--muted)">chunk 구조</span></div><div class="arrow">→</div>
+      <div class="step">2주<br/><span style="font-weight:400;color:var(--muted)">chunk 전송</span></div><div class="arrow">→</div>
+      <div class="step">3주<br/><span style="font-weight:400;color:var(--muted)">STT/feature</span></div><div class="arrow">→</div>
+      <div class="step">4주<br/><span style="font-weight:400;color:var(--muted)">RAG 질문</span></div><div class="arrow">→</div>
+      <div class="step">5주<br/><span style="font-weight:400;color:var(--muted)">LangGraph</span></div><div class="arrow">→</div>
+      <div class="step">6주<br/><span style="font-weight:400;color:var(--muted)">리포트</span></div>
+    </div>
+
+    <div class="callout warn">
+      한계로 지적되던 점 — AI 면접관의 <b>절대 평가 신뢰도</b>, 면접관마다 다른 기준,
+      "기술을 다 썼지만 결국 무엇이 좋아진 건지" 설명이 약함.
+    </div>
+  </section>
+
+  <!-- 4. 오늘 회의에서 바뀐 점 -->
+  <section class="slide">
+    <div class="eyebrow">03 · 오늘 회의 (2026-05-25)</div>
+    <h1>방향 전환: <span style="color:var(--brand)">교정 루프</span></h1>
+    <h2>첫 면접을 개인 baseline으로 저장하고, 이후 면접과 비교해 변화를 보여주는 코칭 구조</h2>
+
+    <div class="card brand" style="margin-bottom: 20px;">
+      <h3 style="color: var(--brand);">한 줄 정의</h3>
+      <p style="color: var(--ink); font-size: 17px; margin: 0;">
+        AI가 절대 평가를 하는 면접관이 아니라, <b>사용자 본인의 초기 상태와 비교</b>해
+        시선 이탈·긴 침묵·자세 흔들림·답변 구체성이 어떻게 변했는지 보여주는 서비스.
+      </p>
+    </div>
+
+    <h3>새 흐름</h3>
+    <div class="flow" style="margin-bottom: 18px;">
+      <div class="step">온보딩</div><div class="arrow">→</div>
+      <div class="step brand">Baseline 면접</div><div class="arrow">→</div>
+      <div class="step">요약 지표 저장</div><div class="arrow">→</div>
+      <div class="step">교정 포인트 제시</div><div class="arrow">→</div>
+      <div class="step accent">Correction Loop</div><div class="arrow">→</div>
+      <div class="step accent">변화 비교 리포트</div>
+    </div>
+
+    <div class="grid-3">
+      <div class="card accent">
+        <h3>왜 좋은가</h3>
+        <ul class="tight">
+          <li>AI 절대 평가 신뢰도 문제 회피</li>
+          <li>"본인 대비 변화"라 설명이 안전</li>
+          <li>발표에서 그래프/수치로 보여주기 좋음</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>기술 정당성 강화</h3>
+        <ul class="tight">
+          <li>MediaPipe → baseline·loop 동일 측정</li>
+          <li>Web Audio → 침묵/음량 비교</li>
+          <li>STT → transcript 비교 + 피드백</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h3>주의할 점</h3>
+        <ul class="tight">
+          <li>질문이 달라지면 비교가 공정하지 않음</li>
+          <li>답변을 외워 개선처럼 보일 수 있음</li>
+          <li>지표 ≠ 실제 면접 역량 (단정 금지)</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Before / After 비교 -->
+  <section class="slide">
+    <div class="eyebrow">04 · Before / After</div>
+    <h1>무엇이 어떻게 바뀌었나</h1>
+    <h2>구조를 갈아엎는 것이 아니라, 기존 chunk·STT·RAG·LangGraph 위에 <b>baseline + 교정 루프</b> 레이어를 얹는 변화</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:18%">구분</th>
+          <th style="width:41%"><span class="badge before">BEFORE — 기존 방향</span></th>
+          <th style="width:41%"><span class="badge after">AFTER — 회의 후 새 방향</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="label">서비스 컨셉</td>
+          <td class="before">한 번의 면접을 분석해 다음 질문/최종 피드백 제공</td>
+          <td class="after">여러 회차를 비교해 사용자의 변화·개선 추세를 보여줌</td>
+        </tr>
+        <tr>
+          <td class="label">평가 기준</td>
+          <td class="before">현재 답변이 얼마나 적절한지 (절대 평가)</td>
+          <td class="after">초기 baseline 대비 얼마나 변화했는지 (상대 비교)</td>
+        </tr>
+        <tr>
+          <td class="label">사용자 경험</td>
+          <td class="before">면접 1회 → 결과 확인 → 종료</td>
+          <td class="after">연습 → 피드백 → 목표 선택 → 재연습 → 변화 확인 반복</td>
+        </tr>
+        <tr>
+          <td class="label">최종 결과물</td>
+          <td class="before">개별 면접 리포트</td>
+          <td class="after">개별 리포트 + 회차별 비교 + 남은 약점 요약</td>
+        </tr>
+        <tr>
+          <td class="label">세션 모델</td>
+          <td class="before"><code>session</code>만 존재</td>
+          <td class="after"><code>sessionType: baseline | practice_loop</code>, <code>loopIndex</code>, <code>baselineSessionId</code> 추가</td>
+        </tr>
+        <tr>
+          <td class="label">LLM 입력</td>
+          <td class="before">chunk·STT 원문을 그대로 길게 넣을 위험</td>
+          <td class="after">Write/Select/Compress/Isolate로 baseline 요약·현재 목표만 선별 입력</td>
+        </tr>
+        <tr>
+          <td class="label">발표 스토리</td>
+          <td class="before">"멀티모달 기술을 다 썼다"</td>
+          <td class="after">"개인 기준선 대비 무엇이 좋아졌는지 시각화한다"</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 6. MVP 범위 -->
+  <section class="slide">
+    <div class="eyebrow">05 · MVP 범위</div>
+    <h1>이번 학기에 끝낼 범위</h1>
+    <h2>baseline 1회 + practice loop 1회 비교까지. 그 외는 모두 향후 개발로 분리.</h2>
+
+    <div class="kpi" style="margin-bottom: 22px;">
+      <div class="k"><div class="v">1</div><div class="l">Baseline 면접</div></div>
+      <div class="k"><div class="v">1</div><div class="l">Practice Loop</div></div>
+      <div class="k"><div class="v">3–4</div><div class="l">비교 핵심 지표</div></div>
+      <div class="k"><div class="v">2–3</div><div class="l">개선점 / 남은 약점</div></div>
+    </div>
+
+    <div class="grid-2">
+      <div>
+        <h3 style="color: var(--accent);">포함 (IN)</h3>
+        <div class="mvp-list">
+          <div class="item in"><span class="mark">IN</span>Baseline 면접 1회 (공통 질문 세트)</div>
+          <div class="item in"><span class="mark">IN</span>Practice Loop 1회 (같은/유사 유형 질문)</div>
+          <div class="item in"><span class="mark">IN</span>회차별 요약 지표 저장 (Redis → PostgreSQL)</div>
+          <div class="item in"><span class="mark">IN</span>핵심 4지표 비교: 시선 이탈 · 자세 흔들림 · 긴 침묵 · 말하기 비율</div>
+          <div class="item in"><span class="mark">IN</span>변화 비교 리포트 화면 (수치 + 메시지)</div>
+          <div class="item in"><span class="mark">IN</span>"초기 측정 대비 ~" 표현 톤 통일</div>
+        </div>
+      </div>
+      <div>
+        <h3 style="color: var(--muted);">제외 (LATER)</h3>
+        <div class="mvp-list">
+          <div class="item out"><span class="mark">OUT</span>여러 회차 누적 그래프 / 장기 추세</div>
+          <div class="item out"><span class="mark">OUT</span>면접관 페르소나 · 압박 시뮬레이션</div>
+          <div class="item out"><span class="mark">OUT</span>합격 가능성 점수 / 절대 점수화</div>
+          <div class="item out"><span class="mark">OUT</span>직군별 정교한 비언어 기준</div>
+          <div class="item out"><span class="mark">OUT</span>Jetson Nano · streak/게임화</div>
+          <div class="item out"><span class="mark">OUT</span>filler word · 손/하체 정밀 지표</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout accent" style="margin-top: 18px;">
+      <b>표현 규칙</b> · "개선되었습니다 / 합격 가능성 / 긴장이 줄었습니다" ❌ →
+      "초기 측정 대비 시선 이탈 비율이 감소했습니다 / 안정적인 구간이 늘었습니다" ✅
+    </div>
+  </section>
+
+  <!-- 7. 세션 연결 방식 -->
+  <section class="slide">
+    <div class="eyebrow">06 · 세션 연결 방식</div>
+    <h1>로그인 없이, <span style="color:var(--brand)">groupId</span>로 묶는다</h1>
+    <h2>baseline → loop → report를 "한 세션"이 아니라 "같은 그룹의 여러 세션"으로 연결. 끊겨도 안 죽음.</h2>
+
+    <div class="grid-2" style="margin-bottom: 18px;">
+      <div class="card brand">
+        <h3>핵심 결정</h3>
+        <ul class="plain tight">
+          <li>baseline + loop×3 을 <b>한 세션으로 묶지 않음</b> (끊기면 다 날아감)</li>
+          <li>변수/메모리 저장 <b>X</b> · Redis 영속 저장 <b>O</b></li>
+          <li>로그인 없이 <code>groupId</code> + <code>localStorage</code>로 사용자 구분</li>
+          <li>"사용자 = 같은 브라우저에서 같은 groupId를 들고 오는 사람"</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>왜 이렇게?</h3>
+        <ul class="plain tight">
+          <li>변수 저장은 서버 재시작·worker 분리에 취약</li>
+          <li>한 세션 = 30~60분 → 시연·연습에서 끊김 리스크 큼</li>
+          <li>로그인 구현은 2주 일정에 비용 대비 효과 낮음</li>
+          <li>Redis는 chunk 병합용으로 이미 쓰는 인프라 — 추가 비용 0</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>흐름</h3>
+    <div class="card muted" style="font-family: ui-monospace, Menlo, monospace; font-size: 13.5px; line-height: 1.85; color: var(--ink); padding: 20px 24px;">
+      1. "면접 시작" 클릭<br/>
+      &nbsp;&nbsp;&nbsp;→ 백엔드: <code>groupId = "g_a1b2c3"</code> 발급<br/>
+      &nbsp;&nbsp;&nbsp;→ 프론트: <code>localStorage.setItem('groupId', 'g_a1b2c3')</code><br/><br/>
+      2. baseline 면접 종료<br/>
+      &nbsp;&nbsp;&nbsp;→ Redis: <code>SET group:g_a1b2c3:baseline {gazeAway:0.38, ...} EX 7d</code><br/><br/>
+      3. "교정 루프 시작" 클릭 (브라우저 껐다 켜도 OK)<br/>
+      &nbsp;&nbsp;&nbsp;→ 프론트: localStorage에서 <code>groupId</code> 꺼냄<br/>
+      &nbsp;&nbsp;&nbsp;→ POST /sessions/loop { groupId }<br/>
+      &nbsp;&nbsp;&nbsp;→ 백엔드: Redis에서 baseline 조회 → 동일 측정<br/><br/>
+      4. loop 종료 → 비교 리포트<br/>
+      &nbsp;&nbsp;&nbsp;→ baseline + 이번 loop 요약 비교
+    </div>
+
+    <div class="grid-2" style="margin-top: 18px;">
+      <div class="card accent">
+        <h3 style="color: var(--accent);">가능한 것</h3>
+        <ul class="tight">
+          <li>baseline 끝내고 브라우저 꺼도 다음 날 이어서 가능</li>
+          <li>서버 재시작에도 데이터 유지</li>
+          <li>worker 여러 개여도 동일 데이터 조회</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h3 style="color: var(--warn);">제약</h3>
+        <ul class="tight">
+          <li>같은 노트북 · 같은 브라우저 · 같은 도메인이어야 함</li>
+          <li>시크릿 모드 X · 브라우저 데이터 삭제 X</li>
+          <li>Redis TTL 만료 시 새로 시작 (기본 7일 권장)</li>
+          <li>시연 당일은 연속 진행이라 사실상 무관</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. 다음 액션 -->
+  <section class="slide">
+    <div class="eyebrow">07 · 다음 액션</div>
+    <h1>이번 주 / 다음 주에 할 일</h1>
+    <h2>역할별로 가장 가까운 한 걸음만. 모호한 건 회의에서 결정.</h2>
+
+    <div class="grid-3">
+      <div class="card brand">
+        <h3>Backend</h3>
+        <ul class="plain tight">
+          <li>세션 모델에 <code>sessionType</code>, <code>loopIndex</code>, <code>baselineSessionId</code> 추가</li>
+          <li>회차 요약 지표 스키마 확정 (4지표)</li>
+          <li>baseline ↔ current 비교 API 신설</li>
+          <li>LangGraph 입력에 baseline 요약 주입</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Frontend / MediaPipe</h3>
+        <ul class="plain tight">
+          <li>baseline / loop 모드 분기 UI</li>
+          <li>결과 화면: 변화 비교 카드 (수치 + 화살표)</li>
+          <li>같은 측정 파이프라인 유지 (공정성)</li>
+          <li>"교정 포인트" 안내 컴포넌트</li>
+        </ul>
+      </div>
+      <div class="card accent">
+        <h3>자료 / QA</h3>
+        <ul class="plain tight">
+          <li>공통 질문 세트 4유형 확정 (자기소개·프로젝트·협업·문제해결)</li>
+          <li>유사 질문 풀 작성 (외움 방지)</li>
+          <li>표현 가이드 (관찰값 중심) 정리</li>
+          <li>발표 스토리 초안</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="hr"></div>
+
+    <h3>회의에서 확정해야 할 것</h3>
+    <div class="section-list">
+      <div class="row"><div class="n">Q1</div><div class="t">이 방향(교정 루프)을 최종 MVP 방향으로 확정할 것인가?</div></div>
+      <div class="row"><div class="n">Q2</div><div class="t">baseline과 loop에 같은 질문을 쓸 것인가, 같은 유형의 다른 질문을 쓸 것인가?</div></div>
+      <div class="row"><div class="n">Q3</div><div class="t">비교 핵심 지표 3–4개를 어떤 조합으로 확정할 것인가?</div></div>
+      <div class="row"><div class="n">Q4</div><div class="t">"개선" 표현 대신 "초기 대비 변화"로 톤을 통일할 것인가?</div></div>
+    </div>
+  </section>
+
+</div>
+
+<div class="footer">
+  <div class="brand-mark">Interview<span>IQ</span> · 2026 Capstone</div>
+  <div>2026-05-25 · 팀 공유용</div>
+</div>
+
+<div class="nav">
+  <span class="counter"><span id="cur">1</span> / <span id="tot">7</span></span>
+  <button id="prev" aria-label="이전">‹</button>
+  <button id="next" aria-label="다음">›</button>
+</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  let idx = 0;
+
+  const elCur = document.getElementById('cur');
+  const elTot = document.getElementById('tot');
+  const bar   = document.getElementById('progressBar');
+  elTot.textContent = total;
+
+  function go(n) {
+    idx = (n + total) % total;
+    slides.forEach((s, i) => s.classList.toggle('active', i === idx));
+    elCur.textContent = idx + 1;
+    bar.style.width = ((idx + 1) / total * 100) + '%';
+  }
+
+  document.getElementById('prev').addEventListener('click', () => go(idx - 1));
+  document.getElementById('next').addEventListener('click', () => go(idx + 1));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(idx + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(idx - 1); }
+    else if (e.key === 'Home') { go(0); }
+    else if (e.key === 'End')  { go(total - 1); }
+    else if (/^[1-9]$/.test(e.key)) {
+      const n = parseInt(e.key, 10) - 1;
+      if (n < total) go(n);
+    }
+  });
+
+  go(0);
+</script>
+
+</body>
+</html>

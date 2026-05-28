@@ -1,0 +1,1476 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>InterviewIQ · Baseline → Correction Loop (2026-05-25)</title>
+
+<!-- === FONTS: Fraunces (italic serif) + JetBrains Mono =============== -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,800;1,9..144,400;1,9..144,500;1,9..144,600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/* =========================================================================
+   1. VIEWPORT BASE — FIXED 16:9 STAGE (1920×1080, scaled to fit window)
+   ========================================================================= */
+html, body {
+  width: 100%; height: 100%; margin: 0; overflow: hidden;
+  background: #000;
+}
+.deck-viewport {
+  position: fixed; inset: 0; overflow: hidden;
+  background: #0d0f12;
+}
+.deck-stage {
+  position: absolute; left: 0; top: 0;
+  width: 1920px; height: 1080px;
+  overflow: hidden;
+  transform-origin: 0 0;
+}
+.slide {
+  position: absolute; inset: 0;
+  width: 1920px; height: 1080px;
+  overflow: hidden;
+  display: block;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+.slide.active, .slide.visible {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 1;
+}
+img, video, canvas, svg { max-width: 100%; max-height: 100%; }
+
+@media print {
+  html, body { width: 1920px; height: auto; overflow: visible; background: #fff; }
+  .deck-viewport { position: static; overflow: visible; background: #fff; }
+  .deck-stage { position: static; width: auto; height: auto; transform: none !important; background: none; }
+  .slide { position: relative; display: block !important; visibility: visible !important; opacity: 1 !important; pointer-events: auto !important; width: 1920px; height: 1080px; break-after: page; page-break-after: always; }
+  .slide:last-child { break-after: auto; page-break-after: auto; }
+  .deck-controls { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.2s !important; }
+}
+
+/* =========================================================================
+   2. THEME — ENGINEER'S NOTEBOOK
+   Dark IDE-meets-editorial. Warm cream ink on near-black canvas.
+   Single signal-amber accent. Fraunces serif × JetBrains Mono.
+   ========================================================================= */
+:root {
+  --canvas:      #0d0f12;
+  --canvas-2:    #14171c;
+  --canvas-3:    #1b1f25;
+  --ink:         #ece6d3;
+  --ink-bright:  #fff8e2;
+  --ink-soft:    #8b8576;
+  --ink-dim:     rgba(236,230,211,.16);
+  --amber:       #ffb547;
+  --amber-soft:  rgba(255,181,71,.16);
+  --amber-dim:   rgba(255,181,71,.32);
+  --rose:        #ff8a7a;
+  --teal:        #6fd2c7;
+  --line:        rgba(236,230,211,.10);
+  --line-strong: rgba(236,230,211,.22);
+
+  --font-serif:  'Fraunces', Georgia, serif;
+  --font-mono:   'JetBrains Mono', ui-monospace, monospace;
+
+  --ease:        cubic-bezier(.16,1,.3,1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* Common slide canvas: dot grid + atmospheric amber wash */
+.slide {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(255,181,71,.07), transparent 70%),
+    radial-gradient(900px 500px at -5% 110%, rgba(255,181,71,.04), transparent 70%),
+    var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-mono);
+}
+.slide::before {
+  content: "";
+  position: absolute; inset: 0;
+  background-image: radial-gradient(rgba(236,230,211,.06) 1.2px, transparent 1.2px);
+  background-size: 32px 32px;
+  background-position: 16px 16px;
+  pointer-events: none;
+}
+
+/* IDE-style outer frame on every slide */
+.frame {
+  position: absolute; inset: 56px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(255,255,255,.012), transparent 50%);
+  pointer-events: none;
+}
+
+/* =========================================================================
+   3. CHROME — top status bar, bottom info bar
+   ========================================================================= */
+.statusbar {
+  position: absolute;
+  top: 88px; left: 88px; right: 88px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--ink-soft);
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  letter-spacing: .04em;
+  z-index: 2;
+}
+.statusbar .left { display: flex; gap: 18px; align-items: center; }
+.statusbar .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 12px var(--amber);
+}
+.statusbar .tag {
+  border: 1px solid var(--ink-dim);
+  padding: 3px 10px;
+  border-radius: 3px;
+  color: var(--ink);
+}
+.statusbar .branch { color: var(--ink-soft); }
+.statusbar .branch::before { content: "⎇ "; color: var(--amber); margin-right: 4px; }
+.statusbar .right { color: var(--ink-soft); }
+
+.bottombar {
+  position: absolute;
+  bottom: 88px; left: 88px; right: 88px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  letter-spacing: .06em;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  z-index: 2;
+}
+.bottombar .pages { color: var(--ink); }
+.bottombar .amber { color: var(--amber); }
+
+/* Slide content region */
+.body {
+  position: absolute;
+  left: 120px; right: 120px;
+  top: 200px; bottom: 180px;
+  z-index: 1;
+}
+
+/* =========================================================================
+   4. TYPOGRAPHY HELPERS
+   ========================================================================= */
+.lead {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--amber);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 22px;
+}
+.lead::before { content: "//"; color: var(--ink-soft); font-weight: 700; }
+
+h1.title {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-style: italic;
+  font-size: 110px;
+  line-height: 0.96;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 0 0 24px;
+}
+h1.title .roman { font-style: normal; font-weight: 800; letter-spacing: -.035em; }
+h1.title .amber { color: var(--amber); font-style: normal; font-weight: 800; }
+h1.title .arrow { font-family: var(--font-mono); font-style: normal; font-weight: 500; color: var(--ink-soft); font-size: 64px; vertical-align: 16px; padding: 0 10px; }
+
+.subtitle {
+  font-family: var(--font-serif);
+  font-size: 24px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--ink);
+  max-width: 1200px;
+}
+.subtitle b { color: var(--amber); font-weight: 600; }
+.subtitle .mono { font-family: var(--font-mono); font-size: 20px; color: var(--ink-soft); }
+
+/* =========================================================================
+   5. CARDS, GRIDS, TABLES — reading-deck building blocks
+   ========================================================================= */
+.card {
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 28px 32px;
+  position: relative;
+}
+.card.amber { border-left: 2px solid var(--amber); }
+.card.muted { background: rgba(255,255,255,.02); }
+
+.card .ctitle {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 10px;
+}
+.card .ctitle.amber { color: var(--amber); }
+.card .ctitle .pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--ink-dim);
+  border-radius: 999px;
+  color: var(--ink-soft);
+}
+
+.card h3 {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 12px;
+  letter-spacing: -.01em;
+}
+
+.card ul {
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--ink);
+}
+.card ul li {
+  position: relative;
+  padding-left: 20px;
+}
+.card ul li::before {
+  content: "▸";
+  color: var(--amber);
+  position: absolute; left: 0; top: 0;
+  font-weight: 700;
+}
+
+.card p {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+}
+.card p b { color: var(--ink); font-weight: 600; }
+.card p .amber { color: var(--amber); }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+
+/* Code-flavored callout */
+.code-card {
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--amber);
+  border-radius: 4px;
+  padding: 22px 26px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.9;
+  color: var(--ink);
+}
+.code-card .k { color: var(--amber); }
+.code-card .s { color: var(--ink); }
+.code-card .c { color: var(--ink-soft); opacity: .7; }
+.code-card .head {
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  font-size: 11px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* KPI tile */
+.kpi-tile {
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 24px 26px;
+}
+.kpi-tile .v {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 600;
+  font-size: 64px;
+  color: var(--amber);
+  line-height: 1;
+  letter-spacing: -.02em;
+}
+.kpi-tile .l {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-soft);
+  letter-spacing: .05em;
+}
+.kpi-tile .l b { color: var(--ink); font-weight: 600; }
+
+/* Table */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.table thead th {
+  text-align: left;
+  padding: 14px 18px;
+  background: var(--canvas-3);
+  border-bottom: 1px solid var(--line-strong);
+  font-size: 12px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.table thead th.before-h { color: var(--rose); }
+.table thead th.after-h  { color: var(--amber); }
+.table tbody td {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  line-height: 1.6;
+  vertical-align: top;
+}
+.table tbody tr:last-child td { border-bottom: none; }
+.table td.label {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--amber);
+  font-weight: 500;
+  font-size: 15px;
+  width: 16%;
+}
+.table td.before { color: var(--ink-soft); }
+.table td.after  { color: var(--ink); }
+
+/* Flow diagram */
+.flow {
+  display: flex; align-items: stretch; gap: 6px; flex-wrap: nowrap;
+  width: 100%;
+}
+.flow .step {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 14px 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 500;
+  text-align: center;
+  letter-spacing: .03em;
+  line-height: 1.4;
+  display: flex; align-items: center; justify-content: center;
+}
+.flow .step.amber { background: var(--amber-soft); border-color: var(--amber-dim); color: var(--amber); font-weight: 600; }
+.flow .step.bright { color: var(--ink-bright); border-color: var(--line-strong); }
+.flow .arrow {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  width: 24px;
+  flex: 0 0 24px;
+}
+
+/* Inline pills/tags */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ink-dim);
+  color: var(--ink-soft);
+}
+.tag.amber { color: var(--amber); border-color: var(--amber-dim); background: var(--amber-soft); }
+.tag.rose  { color: var(--rose); border-color: rgba(255,138,122,.4); }
+.tag.teal  { color: var(--teal); border-color: rgba(111,210,199,.4); }
+
+/* Two-state list (IN / OUT) */
+.bucket {
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 24px 28px;
+}
+.bucket.in  { border-left: 2px solid var(--amber); }
+.bucket.out { border-left: 2px solid var(--ink-soft); opacity: .92; }
+.bucket .head {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 14px;
+  display: flex; justify-content: space-between;
+}
+.bucket.in .head .lbl  { color: var(--amber); }
+.bucket.out .head .lbl { color: var(--ink-soft); }
+.bucket ul { list-style: none; }
+.bucket ul li {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.85;
+  color: var(--ink);
+  padding-left: 22px;
+  position: relative;
+}
+.bucket.in  ul li::before { content: "+"; color: var(--amber);    position: absolute; left: 0; font-weight: 700; }
+.bucket.out ul li::before { content: "−"; color: var(--ink-soft); position: absolute; left: 0; font-weight: 700; }
+
+/* Footnote callout */
+.callout {
+  margin-top: 16px;
+  padding: 14px 20px;
+  border-left: 2px solid var(--amber);
+  background: var(--amber-soft);
+  border-radius: 0 4px 4px 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.callout b { color: var(--amber); font-weight: 700; }
+
+/* Numbered Q list */
+.qlist { display: grid; gap: 10px; }
+.qlist .q {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 18px;
+  padding: 14px 20px;
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--ink);
+}
+.qlist .q .n {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 600;
+  color: var(--amber);
+  font-size: 24px;
+}
+
+/* =========================================================================
+   6. REVEAL ANIMATIONS — staggered on slide activation
+   ========================================================================= */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity .6s var(--ease), transform .6s var(--ease);
+}
+.slide.visible .reveal { opacity: 1; transform: translateY(0); }
+.slide.visible .reveal:nth-child(1) { transition-delay: .05s; }
+.slide.visible .reveal:nth-child(2) { transition-delay: .12s; }
+.slide.visible .reveal:nth-child(3) { transition-delay: .20s; }
+.slide.visible .reveal:nth-child(4) { transition-delay: .28s; }
+.slide.visible .reveal:nth-child(5) { transition-delay: .36s; }
+.slide.visible .reveal:nth-child(6) { transition-delay: .44s; }
+
+/* =========================================================================
+   7. CONTROLS (outside the stage)
+   ========================================================================= */
+.deck-controls {
+  position: fixed;
+  right: 24px; bottom: 24px;
+  z-index: 1000;
+  display: flex; gap: 8px; align-items: center;
+  font-family: var(--font-mono);
+}
+.deck-controls .counter {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-right: 8px;
+  letter-spacing: .08em;
+}
+.deck-controls button {
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  width: 36px; height: 36px;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  transition: background .15s, border-color .15s;
+}
+.deck-controls button:hover { background: var(--canvas-3); border-color: var(--amber-dim); color: var(--amber); }
+
+.progress {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: 2px; z-index: 1000;
+  background: transparent;
+}
+.progress .bar { height: 100%; background: var(--amber); width: 0; transition: width .35s var(--ease); }
+
+/* Edit affordance */
+.edit-hotzone { position: fixed; top: 0; left: 0; width: 80px; height: 80px; z-index: 10000; cursor: pointer; }
+.edit-toggle {
+  position: fixed; top: 18px; left: 18px;
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  width: 36px; height: 36px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0; pointer-events: none;
+  transition: opacity .3s ease;
+  z-index: 10001;
+  font-size: 14px;
+}
+.edit-toggle.show, .edit-toggle.active { opacity: 1; pointer-events: auto; }
+.edit-toggle.active { background: var(--amber-soft); border-color: var(--amber); color: var(--amber); }
+[contenteditable="true"] { outline: 1px dashed var(--amber); outline-offset: 4px; cursor: text; }
+
+/* =========================================================================
+   8. PER-SLIDE LAYOUTS
+   ========================================================================= */
+
+/* Cover */
+.cover .body { top: 220px; bottom: 200px; }
+.cover .annot {
+  position: absolute;
+  right: 0; top: 80px;
+  width: 360px;
+  background: var(--canvas-2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--amber);
+  border-radius: 4px;
+  padding: 22px 24px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--ink-soft);
+}
+.cover h1.title { font-size: 156px; }
+.cover .subtitle { font-size: 28px; max-width: 1200px; }
+.cover .gutter {
+  position: absolute;
+  left: 88px; top: 200px;
+  display: flex; flex-direction: column; gap: 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  opacity: .45;
+  letter-spacing: .05em;
+}
+.cover .gutter span { display: block; }
+
+/* Section heading reuse */
+h2.section {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-style: italic;
+  font-size: 64px;
+  line-height: 1.05;
+  letter-spacing: -.02em;
+  color: var(--ink);
+  margin-bottom: 14px;
+}
+h2.section .roman { font-style: normal; font-weight: 800; }
+h2.section .amber { color: var(--amber); font-style: normal; font-weight: 800; }
+
+.section-sub {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--ink-soft);
+  line-height: 1.65;
+  max-width: 1400px;
+  margin-bottom: 36px;
+  letter-spacing: .02em;
+}
+
+/* Layouts for content slides */
+.split-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.split-3row { display: grid; grid-template-rows: auto auto 1fr; gap: 20px; }
+
+</style>
+</head>
+
+<body>
+
+<!-- Progress bar (outside stage) -->
+<div class="progress"><div class="bar" id="progressBar"></div></div>
+
+<!-- Edit affordance (hover top-left or press E) -->
+<div class="edit-hotzone" aria-hidden="true"></div>
+<button class="edit-toggle" id="editToggle" title="Edit mode (E)">✎</button>
+
+<div class="deck-viewport">
+<main class="deck-stage" id="deckStage">
+
+  <!-- =====================================================================
+       SLIDE 1 · COVER
+       ===================================================================== -->
+  <section class="slide cover active visible">
+    <div class="frame"></div>
+
+    <div class="statusbar">
+      <div class="left">
+        <span class="dot"></span>
+        <span class="tag">interviewiq</span>
+        <span class="branch">main · 0525-direction-change</span>
+      </div>
+      <div class="right">2026.05.25 — internal memo · backend lead</div>
+    </div>
+
+    <aside class="gutter" aria-hidden="true">
+      <span>01</span><span>02</span><span>03</span><span>04</span><span>05</span>
+      <span>06</span><span>07</span><span>08</span><span>09</span><span>10</span>
+      <span>11</span><span>12</span><span>13</span><span>14</span><span>15</span>
+      <span>16</span><span>17</span><span>18</span><span>19</span><span>20</span>
+      <span>21</span><span>22</span><span>23</span><span>24</span><span>25</span>
+      <span>26</span><span>27</span><span>28</span><span>29</span><span>30</span>
+    </aside>
+
+    <div class="body">
+      <div class="reveal lead">spec / direction · v2</div>
+      <h1 class="title reveal">
+        <span class="roman">Baseline</span>
+        <span class="arrow">→</span>
+        <span class="amber">Loop</span>.
+      </h1>
+      <p class="subtitle reveal" style="margin-top: 8px;">
+        한 번의 절대 평가가 아니라, 첫 면접을 <b>개인 기준선</b>으로 저장하고
+        반복 연습에서 자세·시선·침묵·음성이 어떻게 변하는지 보여주는 <b>교정 루프</b> 코칭 구조로.
+      </p>
+
+      <div class="reveal" style="display:flex; gap:10px; margin-top:36px;">
+        <span class="tag">멀티모달</span>
+        <span class="tag">MediaPipe</span>
+        <span class="tag">Whisper STT</span>
+        <span class="tag">RAG + LangGraph</span>
+        <span class="tag amber">Baseline → Correction Loop</span>
+      </div>
+    </div>
+
+    <aside class="annot reveal" style="top:200px;">
+      <div style="color: var(--ink-soft); text-transform: uppercase; letter-spacing: .15em; font-size: 11px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line);">// session model</div>
+      <span class="k" style="color:var(--amber)">sessionType</span>: <span style="color:var(--ink)">baseline</span> | <span style="color:var(--ink)">loop</span><br/>
+      <span class="k" style="color:var(--amber)">loopIndex</span>: <span style="color:var(--ink)">0..n</span><br/>
+      <span class="k" style="color:var(--amber)">groupId</span>: <span style="color:var(--ink)">g_a1b2c3</span><br/>
+      <span class="k" style="color:var(--amber)">store</span>: <span style="color:var(--ink)">redis(7d)</span><br/><br/>
+      <span style="color:var(--ink-soft); opacity:.6;">// no auth — localStorage</span><br/>
+      <span style="color:var(--ink-soft); opacity:.6;">// holds groupId</span>
+    </aside>
+
+    <div class="bottombar">
+      <span><span class="amber">●</span>&nbsp;&nbsp;reading-deck · team-share</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">page 001 — 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 2 · PROJECT OVERVIEW
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 01</span><span class="branch">overview</span></div>
+      <div class="right">project context</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">01 · 프로젝트 개요</div>
+      <h2 class="section reveal">What is <span class="amber">InterviewIQ</span>?</h2>
+      <p class="section-sub reveal">
+        혼자서도 모의 면접을 진행하고, 답변 내용과 비언어 행동을 함께 분석받는 <b style="color:var(--ink)">실시간 멀티모달 면접 코칭 서비스</b>.
+        면접 중 데이터를 5초 chunk로 저장·분석하고, 답변 단위(answer turn)로 묶어 꼬리질문/리포트를 만든다.
+      </p>
+
+      <div class="grid-2 reveal" style="margin-bottom: 20px;">
+        <div class="card amber">
+          <div class="ctitle amber">▌ 핵심 차별점</div>
+          <ul>
+            <li>최종 답변만 평가하지 않고, <b style="color:var(--ink-bright)">5초 chunk</b>로 시간 단위 데이터를 누적</li>
+            <li>웹캠 전신 비언어 + 마이크 음성 + STT 텍스트를 <b style="color:var(--ink-bright)">chunkId 기준 병합</b></li>
+            <li>answer turn 단위로 묶어 꼬리질문·최종 리포트 생성</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="ctitle">▌ 스택 한눈에</div>
+          <ul>
+            <li><span style="color:var(--amber)">Frontend</span> · Next.js · MediaPipe · vision/audio chunk 전송</li>
+            <li><span style="color:var(--amber)">Backend</span> · FastAPI · Redis · Whisper · librosa</li>
+            <li><span style="color:var(--amber)">분석</span> · RAG (기업/직무/공통) + LangGraph 5 agents</li>
+            <li><span style="color:var(--amber)">저장</span> · 세션 종료 시 PostgreSQL 영구화</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="reveal">
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 10px;">데이터 흐름</div>
+        <div class="flow">
+          <div class="step">질문</div><div class="arrow">→</div>
+          <div class="step">답변</div><div class="arrow">→</div>
+          <div class="step bright">vision / audio chunk</div><div class="arrow">→</div>
+          <div class="step">chunkId 병합</div><div class="arrow">→</div>
+          <div class="step">answer turn 묶기</div><div class="arrow">→</div>
+          <div class="step amber">다음 질문 / 리포트</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 01 · Overview</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">002 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 3 · EXISTING PLAN
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot" style="background:var(--rose); box-shadow:0 0 12px var(--rose);"></span><span class="tag">§ 02</span><span class="branch">legacy-plan</span></div>
+      <div class="right">PROJECT_CONTEXT · ACTION_PLAN_0521</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">02 · 기존 계획 방향</div>
+      <h2 class="section reveal">One shot. <span style="color:var(--rose); font-style:normal; font-weight:800;">Absolute evaluation.</span></h2>
+      <p class="section-sub reveal">
+        한 번의 모의 면접 → 답변/비언어/음성 분석 → 꼬리질문 → 최종 리포트.
+        <b style="color:var(--ink)">AI가 답변 적절성을 직접 평가</b>하는 1회성 구조.
+      </p>
+
+      <div class="grid-2 reveal" style="margin-bottom: 18px;">
+        <div class="card">
+          <div class="ctitle">▌ 서비스 컨셉</div>
+          <ul>
+            <li>면접 1회 → 다음 질문/꼬리질문 → 종료 리포트</li>
+            <li>"답변이 얼마나 적절한가"를 분석·점수화</li>
+            <li>면접관 페르소나가 사용자를 평가하는 형태</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="ctitle">▌ 기존 6주차 로드맵</div>
+          <div class="flow" style="font-size:11px;">
+            <div class="step">1주<br/><span style="color:var(--ink-soft); font-weight:400; font-size:10px;">chunk 구조</span></div><div class="arrow">→</div>
+            <div class="step">2주<br/><span style="color:var(--ink-soft); font-weight:400; font-size:10px;">chunk 전송</span></div><div class="arrow">→</div>
+            <div class="step">3주<br/><span style="color:var(--ink-soft); font-weight:400; font-size:10px;">STT</span></div><div class="arrow">→</div>
+            <div class="step">4주<br/><span style="color:var(--ink-soft); font-weight:400; font-size:10px;">RAG</span></div><div class="arrow">→</div>
+            <div class="step">5주<br/><span style="color:var(--ink-soft); font-weight:400; font-size:10px;">LangGraph</span></div><div class="arrow">→</div>
+            <div class="step">6주<br/><span style="color:var(--ink-soft); font-weight:400; font-size:10px;">리포트</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout reveal" style="border-left-color: var(--rose); background: rgba(255,138,122,.10);">
+        <b style="color: var(--rose);">한계로 지적된 점</b> ·  AI 면접관의 <u>절대 평가 신뢰도</u>, 면접관마다 다른 기준,
+        "기술을 다 썼지만 결국 무엇이 좋아진 건지" 설명이 약함.
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 02 · Legacy plan</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">003 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 4 · NEW DIRECTION
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 03</span><span class="branch">0525-pivot</span></div>
+      <div class="right">today's meeting · correction loop</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">03 · 오늘 회의 (2026-05-25)</div>
+      <h2 class="section reveal">방향 전환 · <span class="amber">Correction Loop</span></h2>
+      <p class="section-sub reveal">
+        AI가 절대 평가를 하는 면접관이 아니라, <b style="color:var(--ink)">사용자 본인의 초기 상태와 비교</b>해
+        시선 이탈·긴 침묵·자세 흔들림·답변 구체성이 어떻게 변했는지 보여주는 코칭으로.
+      </p>
+
+      <div class="reveal" style="margin-bottom: 20px;">
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 10px;">새 흐름</div>
+        <div class="flow">
+          <div class="step">온보딩</div><div class="arrow">→</div>
+          <div class="step amber">Baseline 면접</div><div class="arrow">→</div>
+          <div class="step">요약 지표 저장</div><div class="arrow">→</div>
+          <div class="step">교정 포인트 제시</div><div class="arrow">→</div>
+          <div class="step amber">Correction Loop</div><div class="arrow">→</div>
+          <div class="step bright">변화 비교 리포트</div>
+        </div>
+      </div>
+
+      <div class="grid-3 reveal">
+        <div class="card amber">
+          <div class="ctitle amber">▌ 왜 좋은가</div>
+          <ul>
+            <li>AI 절대 평가 신뢰도 문제 회피</li>
+            <li>"본인 대비 변화"라 설명이 안전</li>
+            <li>발표 시 그래프·수치 시각화에 유리</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="ctitle">▌ 기술 정당성 강화</div>
+          <ul>
+            <li>MediaPipe → baseline·loop 동일 측정</li>
+            <li>Web Audio → 침묵/음량 비교</li>
+            <li>STT → transcript 비교 + 피드백</li>
+          </ul>
+        </div>
+        <div class="card" style="border-left: 2px solid var(--rose);">
+          <div class="ctitle" style="color: var(--rose);">▌ 주의할 점</div>
+          <ul>
+            <li>질문이 달라지면 비교가 공정하지 않음</li>
+            <li>답변을 외워 개선처럼 보일 수 있음</li>
+            <li>지표 ≠ 실제 면접 역량 (단정 금지)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 03 · New direction</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">004 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 5 · BEFORE / AFTER
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 04</span><span class="branch">diff</span></div>
+      <div class="right">before / after · 7 dimensions</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">04 · before / after</div>
+      <h2 class="section reveal">무엇이 어떻게 <span class="amber">바뀌었나</span></h2>
+      <p class="section-sub reveal">
+        구조를 갈아엎는 것이 아니라, 기존 chunk·STT·RAG·LangGraph 위에 <b style="color:var(--ink)">baseline + 교정 루프</b> 레이어를 얹는 변화.
+      </p>
+
+      <table class="table reveal">
+        <thead>
+          <tr>
+            <th style="width: 16%;">dimension</th>
+            <th class="before-h" style="width: 42%;">▼ BEFORE — 기존 방향</th>
+            <th class="after-h" style="width: 42%;">▲ AFTER — 회의 후 새 방향</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="label">컨셉</td>
+            <td class="before">한 번의 면접을 분석해 다음 질문/최종 피드백 제공</td>
+            <td class="after">여러 회차를 비교해 사용자의 변화·개선 추세를 보여줌</td>
+          </tr>
+          <tr>
+            <td class="label">평가 기준</td>
+            <td class="before">현재 답변이 얼마나 적절한지 (절대 평가)</td>
+            <td class="after">초기 baseline 대비 얼마나 변화했는지 (상대 비교)</td>
+          </tr>
+          <tr>
+            <td class="label">UX</td>
+            <td class="before">면접 1회 → 결과 확인 → 종료</td>
+            <td class="after">연습 → 피드백 → 목표 선택 → 재연습 → 변화 확인 반복</td>
+          </tr>
+          <tr>
+            <td class="label">최종 결과물</td>
+            <td class="before">개별 면접 리포트</td>
+            <td class="after">개별 리포트 + 회차별 비교 + 남은 약점 요약</td>
+          </tr>
+          <tr>
+            <td class="label">세션 모델</td>
+            <td class="before"><span style="color:var(--rose);">session</span> 만 존재</td>
+            <td class="after"><span style="color:var(--amber);">sessionType</span>, <span style="color:var(--amber);">loopIndex</span>, <span style="color:var(--amber);">groupId</span> 추가</td>
+          </tr>
+          <tr>
+            <td class="label">LLM 입력</td>
+            <td class="before">chunk·STT 원문을 그대로 길게 넣을 위험</td>
+            <td class="after">Write / Select / Compress / Isolate — baseline 요약·현재 목표만 선별 입력</td>
+          </tr>
+          <tr>
+            <td class="label">발표 스토리</td>
+            <td class="before">"멀티모달 기술을 다 썼다"</td>
+            <td class="after">"개인 기준선 대비 무엇이 좋아졌는지 시각화한다"</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 04 · Diff</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">005 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 6 · MVP SCOPE
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 05</span><span class="branch">mvp/scope</span></div>
+      <div class="right">2 weeks · ship-ready</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">05 · mvp 범위</div>
+      <h2 class="section reveal">이번 학기에 <span class="amber">끝낼 범위</span></h2>
+      <p class="section-sub reveal">
+        baseline 1회 + practice loop 1회 비교까지. 그 외는 모두 <span style="color:var(--ink-soft);">향후 개발</span>로 분리.
+      </p>
+
+      <div class="grid-4 reveal" style="margin-bottom: 24px;">
+        <div class="kpi-tile"><div class="v">1</div><div class="l"><b>Baseline</b> 면접</div></div>
+        <div class="kpi-tile"><div class="v">1</div><div class="l"><b>Practice Loop</b></div></div>
+        <div class="kpi-tile"><div class="v">3–4</div><div class="l"><b>비교</b> 핵심 지표</div></div>
+        <div class="kpi-tile"><div class="v">2–3</div><div class="l"><b>개선점</b> / 남은 약점</div></div>
+      </div>
+
+      <div class="grid-2 reveal">
+        <div class="bucket in">
+          <div class="head"><span class="lbl">▮ IN — 포함</span><span>this term</span></div>
+          <ul>
+            <li>Baseline 면접 1회 (공통 질문 세트)</li>
+            <li>Practice Loop 1회 (같은/유사 유형 질문)</li>
+            <li>회차별 요약 지표 저장 (Redis → PG)</li>
+            <li>핵심 4지표 비교 · 변화 비교 리포트</li>
+            <li>"초기 측정 대비 ~" 표현 톤 통일</li>
+          </ul>
+        </div>
+        <div class="bucket out">
+          <div class="head"><span class="lbl">▮ LATER — 제외</span><span>post-mvp</span></div>
+          <ul>
+            <li>여러 회차 누적 그래프 / 장기 추세</li>
+            <li>면접관 페르소나 · 압박 시뮬레이션</li>
+            <li>합격 가능성 점수 / 절대 점수화</li>
+            <li>Jetson Nano · streak / 게임화</li>
+            <li>filler word · 손/하체 정밀 지표</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout reveal">
+        <b>표현 규칙</b> · "개선되었습니다 / 합격 가능성 / 긴장이 줄었습니다" ✗  →
+        "초기 측정 대비 시선 이탈 비율이 감소했습니다 / 안정적인 구간이 늘었습니다" ✓
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 05 · MVP scope</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">006 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 7 · CORE COMPARISON METRICS
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 06</span><span class="branch">metrics</span></div>
+      <div class="right">4 signals · same measurement pipeline</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">06 · 핵심 비교 지표</div>
+      <h2 class="section reveal">baseline ↔ loop, <span class="amber">같은 방식으로</span> 잰다</h2>
+      <p class="section-sub reveal">
+        보조 지표를 욕심내지 않고 <b style="color:var(--ink)">4개만 확실하게</b>. 같은 측정 파이프라인을 유지해 비교 공정성을 확보.
+      </p>
+
+      <div class="grid-4 reveal">
+        <div class="card amber">
+          <div class="ctitle amber">▌ 01 · GAZE</div>
+          <h3>시선 이탈</h3>
+          <p>headForwardRatio 기반. 카메라를 향한 시간 비율이 낮은 구간을 <b>looking_away</b> 이벤트로 누적.</p>
+          <p style="margin-top:10px;"><span class="amber">e.g.</span> baseline 38% → loop 22%</p>
+        </div>
+        <div class="card amber">
+          <div class="ctitle amber">▌ 02 · POSTURE</div>
+          <h3>자세 흔들림</h3>
+          <p>postureStability + upperBodyLeanIntensity. 흐트러진 시간 합계와 안정 구간 비율을 비교.</p>
+          <p style="margin-top:10px;"><span class="amber">e.g.</span> 6 → 4 구간</p>
+        </div>
+        <div class="card amber">
+          <div class="ctitle amber">▌ 03 · SILENCE</div>
+          <h3>긴 침묵</h3>
+          <p>silenceDurationMs 임계치 초과 횟수. 답변 흐름이 끊긴 횟수와 총 침묵 시간으로 표현.</p>
+          <p style="margin-top:10px;"><span class="amber">e.g.</span> 5 → 2 회</p>
+        </div>
+        <div class="card amber">
+          <div class="ctitle amber">▌ 04 · VOICE</div>
+          <h3>말하기 비율 / 안정성</h3>
+          <p>speakingRatio + energy 안정성. 답변 자체의 길이와 음량 변동성을 같이 본다.</p>
+          <p style="margin-top:10px;"><span class="amber">e.g.</span> 0.64 → 0.78</p>
+        </div>
+      </div>
+
+      <div class="callout reveal" style="margin-top: 24px;">
+        보조 지표 (filler word · 손/하체 움직임 · 말하기 속도 · 답변 길이) 는 MVP에선 <b>측정만 하고 비교는 보류</b>.
+        리포트에 노출하지 않는다.
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 06 · Comparison metrics</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">007 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 8 · SESSION LINKAGE (groupId / Redis / localStorage)
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 07</span><span class="branch">arch/session-group</span></div>
+      <div class="right">no auth · localStorage + redis</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">07 · 세션 연결 방식</div>
+      <h2 class="section reveal">로그인 없이, <span class="amber">groupId</span>로 묶는다</h2>
+      <p class="section-sub reveal">
+        baseline → loop → report를 한 세션으로 묶지 않고, <b style="color:var(--ink)">같은 그룹의 여러 세션</b>으로 연결.
+        브라우저를 껐다 켜도 안 죽음.
+      </p>
+
+      <div class="split-2col reveal">
+        <!-- Left: flow as code -->
+        <div class="code-card" style="font-size: 13px; line-height: 1.95;">
+          <div class="head">// flow</div>
+          <span class="c">1.</span> 사용자 "면접 시작" 클릭<br/>
+          &nbsp;&nbsp;&nbsp;→ 백엔드: <span class="k">groupId</span> = <span class="s">"g_a1b2c3"</span> 발급<br/>
+          &nbsp;&nbsp;&nbsp;→ 프론트: <span class="k">localStorage.setItem</span>(<span class="s">'groupId', 'g_a1b2c3'</span>)<br/><br/>
+          <span class="c">2.</span> baseline 면접 종료 — 요약 계산<br/>
+          &nbsp;&nbsp;&nbsp;→ <span class="k">redis.SET</span> <span class="s">group:g_a1b2c3:baseline</span> {gazeAway:0.38,...} <span class="k">EX</span> <span class="s">7d</span><br/><br/>
+          <span class="c">3.</span> "교정 루프 시작" (브라우저 꺼도 OK)<br/>
+          &nbsp;&nbsp;&nbsp;→ 프론트: localStorage에서 <span class="k">groupId</span> 꺼냄<br/>
+          &nbsp;&nbsp;&nbsp;→ POST /sessions/loop { groupId }<br/>
+          &nbsp;&nbsp;&nbsp;→ 백엔드: Redis에서 baseline 조회<br/><br/>
+          <span class="c">4.</span> loop 종료 → <span class="k">비교 리포트</span><br/>
+          &nbsp;&nbsp;&nbsp;→ baseline + 이번 loop 요약 비교
+        </div>
+
+        <!-- Right: stacked cards -->
+        <div style="display: grid; gap: 20px;">
+          <div class="card amber">
+            <div class="ctitle amber">▌ 핵심 결정</div>
+            <ul>
+              <li>baseline + loop를 <b style="color:var(--ink-bright)">한 세션으로 묶지 않음</b></li>
+              <li>변수/메모리 저장 <span style="color:var(--rose);">✗</span> · Redis 영속 저장 <span style="color:var(--amber);">✓</span></li>
+              <li>로그인 없이 <span style="color:var(--amber)">groupId</span> + <span style="color:var(--amber)">localStorage</span></li>
+            </ul>
+          </div>
+          <div class="grid-2" style="gap: 16px;">
+            <div class="card" style="padding: 18px 22px;">
+              <div class="ctitle amber" style="font-size: 11px;">▌ 가능</div>
+              <ul style="font-size: 12.5px; line-height: 1.7;">
+                <li>baseline 끝내고 브라우저 껐다 켜도 이어가기</li>
+                <li>서버 재시작에도 데이터 유지</li>
+                <li>FastAPI worker 여러 개여도 OK</li>
+              </ul>
+            </div>
+            <div class="card" style="padding: 18px 22px; border-left: 2px solid var(--rose);">
+              <div class="ctitle" style="color: var(--rose); font-size: 11px;">▌ 제약</div>
+              <ul style="font-size: 12.5px; line-height: 1.7;">
+                <li>같은 브라우저·도메인</li>
+                <li>시크릿 모드 ✗ · 데이터 삭제 ✗</li>
+                <li>Redis TTL 7일 후 새로 시작</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 07 · Session linkage</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">008 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 9 · TONE / WORDING RULES
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 08</span><span class="branch">voice/tone</span></div>
+      <div class="right">how the report should speak</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">08 · 리포트 표현 규칙</div>
+      <h2 class="section reveal">평가가 아니라, <span class="amber">관찰값</span>으로 말한다</h2>
+      <p class="section-sub reveal">
+        같은 데이터라도 단정적 평가로 쓰면 신뢰도 문제가 되돌아온다.
+        "측정 결과 ~이 감지되었다 / 초기 대비 ~이 감소했다" 톤으로 통일.
+      </p>
+
+      <div class="grid-2 reveal">
+        <div class="card" style="border-left: 2px solid var(--rose);">
+          <div class="ctitle" style="color: var(--rose);">▌ 쓰지 않을 표현</div>
+          <ul style="line-height: 2;">
+            <li><span style="color:var(--rose);">나쁜 자세입니다 / 면접 태도가 좋지 않습니다</span></li>
+            <li><span style="color:var(--rose);">긴장한 상태입니다 / 불안 감정이 보입니다</span></li>
+            <li><span style="color:var(--rose);">합격 가능성이 높아졌습니다</span></li>
+            <li><span style="color:var(--rose);">면접을 잘하게 되었습니다 / 태도가 좋아졌습니다</span></li>
+            <li><span style="color:var(--rose);">정확한 시선 추적 / 감정 판별</span></li>
+          </ul>
+        </div>
+        <div class="card amber">
+          <div class="ctitle amber">▌ 권장 표현</div>
+          <ul style="line-height: 2;">
+            <li>초기 측정에서 시선 이탈 구간이 감지되었습니다</li>
+            <li>초기 측정 대비 긴 침묵 횟수가 줄었습니다</li>
+            <li>이번 연습에서는 안정적인 구간이 늘었습니다</li>
+            <li>상체 기울어짐이 감지된 시간이 있었습니다</li>
+            <li>얼굴 방향 기반 주의 집중도 추정</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout reveal" style="margin-top: 22px;">
+        <b>발표 한 줄</b> · "AI가 사용자를 평가하는 면접관이 아니라, 첫 면접을 baseline으로 저장하고
+        반복 연습에서 자세·시선·침묵·음성 습관이 초기 대비 어떻게 변화했는지 보여주는 개인화 면접 코칭 서비스."
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 08 · Tone</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">009 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 10 · NEXT ACTIONS (by role)
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 09</span><span class="branch">actions/this-week</span></div>
+      <div class="right">role-by-role · nearest step</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">09 · 다음 액션</div>
+      <h2 class="section reveal">이번 주 / 다음 주에 <span class="amber">할 일</span></h2>
+      <p class="section-sub reveal">
+        역할별로 가장 가까운 한 걸음만. 모호한 건 회의에서 결정.
+      </p>
+
+      <div class="grid-3 reveal">
+        <div class="card amber">
+          <div class="ctitle amber">▌ Backend</div>
+          <ul>
+            <li>세션 모델에 <span style="color:var(--amber);">sessionType</span>, <span style="color:var(--amber);">loopIndex</span>, <span style="color:var(--amber);">groupId</span> 추가</li>
+            <li>회차 요약 지표 스키마 확정 (4지표)</li>
+            <li>baseline ↔ current 비교 API 신설</li>
+            <li>LangGraph 입력에 baseline 요약 주입</li>
+            <li>Redis 키 네이밍 + TTL 7일 적용</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="ctitle">▌ Frontend / MediaPipe</div>
+          <ul>
+            <li>baseline / loop 모드 분기 UI</li>
+            <li>localStorage에 groupId 저장·복원</li>
+            <li>결과 화면: 변화 비교 카드 (수치 + 화살표)</li>
+            <li>같은 측정 파이프라인 유지 (공정성)</li>
+            <li>"교정 포인트" 안내 컴포넌트</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="ctitle">▌ 자료 / QA</div>
+          <ul>
+            <li>공통 질문 세트 4유형 확정 (자기소개·프로젝트·협업·문제해결)</li>
+            <li>유사 질문 풀 작성 (외움 방지)</li>
+            <li>표현 가이드 (관찰값 중심) 정리</li>
+            <li>발표 스토리 초안 + 시연 시나리오</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 09 · Next actions</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">010 / 011</span>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       SLIDE 11 · OPEN QUESTIONS / CLOSING
+       ===================================================================== -->
+  <section class="slide">
+    <div class="frame"></div>
+    <div class="statusbar">
+      <div class="left"><span class="dot"></span><span class="tag">§ 10</span><span class="branch">decide/next-meeting</span></div>
+      <div class="right">team — please confirm</div>
+    </div>
+
+    <div class="body">
+      <div class="reveal lead">10 · 회의에서 확정해야 할 것</div>
+      <h2 class="section reveal">남은 <span class="amber">결정사항</span></h2>
+      <p class="section-sub reveal">
+        다음 회의 전까지 답이 필요한 항목. 답이 빨리 정해질수록 2주가 덜 빠듯해진다.
+      </p>
+
+      <div class="qlist reveal" style="margin-bottom: 22px;">
+        <div class="q"><div class="n">Q1</div><div>이 방향(교정 루프)을 최종 MVP 방향으로 확정할 것인가?</div></div>
+        <div class="q"><div class="n">Q2</div><div>baseline과 loop에 <b style="color:var(--amber);">같은 질문</b>을 쓸 것인가, 같은 유형의 다른 질문을 쓸 것인가?</div></div>
+        <div class="q"><div class="n">Q3</div><div>비교 핵심 지표 3–4개를 어떤 조합으로 확정할 것인가? (gaze · posture · silence · voice 中)</div></div>
+        <div class="q"><div class="n">Q4</div><div>"개선" 표현 대신 <b style="color:var(--amber);">"초기 대비 변화"</b>로 톤을 통일할 것인가?</div></div>
+        <div class="q"><div class="n">Q5</div><div>시연 당일 baseline + loop를 <b style="color:var(--amber);">연속 1세트</b>만 보여줄 것인가, 사전 녹화 사용할 것인가?</div></div>
+      </div>
+
+      <div class="callout reveal">
+        — end of memo — &nbsp;&nbsp;keyboard: <span style="color:var(--amber);">← →</span> 슬라이드 이동
+        · <span style="color:var(--amber);">1–9</span> 점프 · <span style="color:var(--amber);">E</span> 인라인 편집 · <span style="color:var(--amber);">Home / End</span> 처음·끝
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>§ 10 · Decide</span>
+      <span>InterviewIQ · 2026 Capstone Design</span>
+      <span class="pages">011 / 011</span>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<!-- Deck nav controls (outside the stage) -->
+<div class="deck-controls">
+  <span class="counter"><span id="curN">01</span> / <span id="totN">11</span></span>
+  <button id="btnPrev" aria-label="이전">‹</button>
+  <button id="btnNext" aria-label="다음">›</button>
+</div>
+
+<script>
+/* =========================================================================
+   SLIDE PRESENTATION CONTROLLER
+   - Fixed 16:9 stage scaling
+   - Keyboard, click, touch navigation
+   - Inline text editing (hotzone hover or `E` key) with localStorage save
+   ========================================================================= */
+class SlidePresentation {
+  constructor() {
+    this.slides = Array.from(document.querySelectorAll('.slide'));
+    this.total = this.slides.length;
+    this.idx = 0;
+    this.stage = document.getElementById('deckStage');
+    this.curN = document.getElementById('curN');
+    this.totN = document.getElementById('totN');
+    this.bar = document.getElementById('progressBar');
+
+    this.totN.textContent = String(this.total).padStart(2, '0');
+
+    this.setupStageScale();
+    this.setupKeyboardNav();
+    this.setupTouchNav();
+    this.setupButtons();
+
+    this.go(0);
+  }
+
+  /* Scale 1920×1080 stage uniformly to viewport, letterbox/pillarbox */
+  setupStageScale() {
+    const scale = () => {
+      const k = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+      const x = (window.innerWidth - 1920 * k) / 2;
+      const y = (window.innerHeight - 1080 * k) / 2;
+      this.stage.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+    };
+    scale();
+    window.addEventListener('resize', scale);
+  }
+
+  setupKeyboardNav() {
+    document.addEventListener('keydown', (e) => {
+      // Don't hijack keys while editing text
+      if (e.target.getAttribute && e.target.getAttribute('contenteditable') === 'true') return;
+
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+        e.preventDefault(); this.go(this.idx + 1);
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        e.preventDefault(); this.go(this.idx - 1);
+      } else if (e.key === 'Home') {
+        this.go(0);
+      } else if (e.key === 'End') {
+        this.go(this.total - 1);
+      } else if (/^[1-9]$/.test(e.key)) {
+        const n = parseInt(e.key, 10) - 1;
+        if (n < this.total) this.go(n);
+      }
+    });
+  }
+
+  setupTouchNav() {
+    let x0 = 0, y0 = 0;
+    document.addEventListener('touchstart', (e) => {
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+    }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - x0;
+      const dy = e.changedTouches[0].clientY - y0;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+        this.go(this.idx + (dx < 0 ? 1 : -1));
+      }
+    }, { passive: true });
+  }
+
+  setupButtons() {
+    document.getElementById('btnPrev').addEventListener('click', () => this.go(this.idx - 1));
+    document.getElementById('btnNext').addEventListener('click', () => this.go(this.idx + 1));
+  }
+
+  go(n) {
+    this.idx = Math.max(0, Math.min(n, this.total - 1));
+    this.slides.forEach((s, i) => {
+      s.classList.toggle('active', i === this.idx);
+      s.classList.toggle('visible', i === this.idx);
+    });
+    this.curN.textContent = String(this.idx + 1).padStart(2, '0');
+    this.bar.style.width = ((this.idx + 1) / this.total * 100) + '%';
+  }
+}
+
+/* =========================================================================
+   INLINE EDIT MODE (hover top-left hotzone or press E)
+   ========================================================================= */
+class InlineEditor {
+  constructor() {
+    this.isActive = false;
+    this.toggleBtn = document.getElementById('editToggle');
+    this.hotzone = document.querySelector('.edit-hotzone');
+    this.STORAGE_KEY = 'iq-slides-v2-edits';
+
+    this.restore();
+    this.bindHover();
+    this.bindClicks();
+    this.bindKey();
+  }
+
+  bindHover() {
+    let hideTimeout = null;
+    const show = () => {
+      clearTimeout(hideTimeout);
+      this.toggleBtn.classList.add('show');
+    };
+    const hideLater = () => {
+      hideTimeout = setTimeout(() => {
+        if (!this.isActive) this.toggleBtn.classList.remove('show');
+      }, 400);
+    };
+    this.hotzone.addEventListener('mouseenter', show);
+    this.hotzone.addEventListener('mouseleave', hideLater);
+    this.toggleBtn.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
+    this.toggleBtn.addEventListener('mouseleave', hideLater);
+  }
+
+  bindClicks() {
+    this.toggleBtn.addEventListener('click', () => this.toggle());
+    this.hotzone.addEventListener('click', () => this.toggle());
+  }
+
+  bindKey() {
+    document.addEventListener('keydown', (e) => {
+      if ((e.key === 'e' || e.key === 'E') &&
+          !(e.target.getAttribute && e.target.getAttribute('contenteditable') === 'true')) {
+        e.preventDefault();
+        this.toggle();
+      }
+    });
+  }
+
+  toggle() {
+    this.isActive = !this.isActive;
+    this.toggleBtn.classList.toggle('active', this.isActive);
+
+    // Make text containers editable
+    const editable = document.querySelectorAll('h1, h2, h3, p, li, .ctitle, .subtitle, .section-sub, .lead');
+    editable.forEach((el) => {
+      if (this.isActive) {
+        el.setAttribute('contenteditable', 'true');
+        el.addEventListener('input', this.save);
+      } else {
+        el.removeAttribute('contenteditable');
+      }
+    });
+
+    if (!this.isActive) this.save();
+  }
+
+  save = () => {
+    // Persist innerHTML of all slides
+    const html = document.querySelector('.deck-stage').innerHTML;
+    try { localStorage.setItem(this.STORAGE_KEY, html); } catch {}
+  }
+
+  restore() {
+    try {
+      const saved = localStorage.getItem(this.STORAGE_KEY);
+      if (saved) document.querySelector('.deck-stage').innerHTML = saved;
+    } catch {}
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  window.editor = new InlineEditor();
+  window.deck = new SlidePresentation();
+});
+</script>
+
+</body>
+</html>

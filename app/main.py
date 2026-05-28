@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.db.database import init_db
 from app.core.redis import init_redis
+from app.api.auth import router as auth_router
 from app.api.rag import router as rag_router
 from app.api.sessions import router as sessions_router
 
@@ -25,6 +26,7 @@ app.add_middleware(
 )
 app.include_router(sessions_router)
 app.include_router(rag_router)
+app.include_router(auth_router)
 
 @app.get("/health")
 async def health():
