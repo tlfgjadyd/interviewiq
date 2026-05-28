@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
+import { useEffect, useMemo, useRef } from "react";
 import { SettingsProvider } from "@/lib/settings-provider";
 import Camera from "@/components/Camera/Camera";
 import { MetricsProvider } from "@/context/MetricsContext";
@@ -10,30 +10,44 @@ import {
   useInterviewSession,
 } from "@/context/InterviewSessionContext";
 import { Button } from "@/components/ui/button";
-import { MessageSquareText, Square } from "lucide-react";
+import { Maximize2, Square } from "lucide-react";
 
 const fallbackQuestion = "자기소개를 부탁드립니다.";
 const totalQuestions = 5;
 
 function InterviewStage() {
+  const didAutoStartRef = useRef(false);
   const {
     session,
-    isCreatingSession,
     isFinishingAnswer,
     startSession,
     finishAnswer,
   } = useInterviewSession();
 
-  const questionIndex = session?.questionIndex ?? 1;
   const questionTitle = session?.currentQuestion ?? fallbackQuestion;
-  const progress = Math.min((questionIndex / totalQuestions) * 100, 100);
   const isSessionActive = session?.status === "active";
+  const waveformBars = useMemo(
+    () =>
+      Array.from({ length: 44 }).map(
+        (_, index) =>
+          8 + Math.abs(Math.sin(index * 0.72)) * 24 + (index % 6) * 1.5
+      ),
+    []
+  );
 
-  const start = async () => {
-    if (!session) {
-      await startSession({ totalQuestions });
+  useEffect(() => {
+    if (didAutoStartRef.current || session) {
+      return;
     }
-  };
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("autoStart") !== "1") {
+      return;
+    }
+
+    didAutoStartRef.current = true;
+    startSession({ totalQuestions });
+  }, [session, startSession]);
 
   const endAnswer = async () => {
     if (!session || isFinishingAnswer) {
@@ -44,43 +58,8 @@ function InterviewStage() {
   };
 
   return (
-    <main className="flex h-[100dvh] flex-col overflow-hidden bg-[#f7f8fb] px-0 text-slate-950 flex flex-col">
-      <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
-        <Link href="/" className="flex items-center gap-3 justify-self-start">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
-            <MessageSquareText className="h-5 w-5" />
-          </span>
-          <span className="text-xl font-semibold">
-            실전 면접 화면 (AI Interviewer)
-          </span>
-        </Link>
-
-        <div className="min-w-[280px] text-center">
-          <p className="text-base font-semibold text-slate-700">
-            질문 {questionIndex}/{totalQuestions} · 자기소개
-          </p>
-          <div className="mx-auto mt-2 h-1.5 w-56 overflow-hidden rounded-full bg-slate-200">
-            <div
-              className="h-full rounded-full bg-blue-600 transition-all"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-
-        <div className="justify-self-end">
-          <Button
-            type="button"
-            size="sm"
-            onClick={start}
-            disabled={isCreatingSession || Boolean(session)}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            {session ? "진행 중" : "세션 시작"}
-          </Button>
-        </div>
-      </header>
-
-      <section className="mt-4 min-h-0 flex-1 overflow-hidden rounded-[22px] border border-slate-200 bg-slate-950 shadow-sm">
+    <main className="flex h-[100dvh] overflow-hidden bg-[#f7f8fb] p-5 text-slate-950">
+      <section className="min-h-0 flex-1 overflow-hidden rounded-[26px] border border-slate-200 bg-slate-950 shadow-xl shadow-slate-200">
         <div className="relative h-full min-h-0 overflow-hidden">
           <Image
             src="/images/ai-interviewer-room.png"
@@ -90,59 +69,66 @@ function InterviewStage() {
             sizes="100vw"
             className="object-cover object-[center_top]"
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/58 via-black/16 to-black/8" />
-          <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/50 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-black/64 via-black/18 to-black/4" />
+          <div className="absolute inset-x-0 bottom-0 h-[44%] bg-gradient-to-t from-black/58 via-black/22 to-transparent" />
 
-          <div className="absolute left-8 top-8 flex items-center gap-2 text-xl font-medium text-white">
+          <div className="absolute left-8 top-8 z-20 flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/38 px-4 py-3 text-base font-bold text-white shadow-lg backdrop-blur">
             <span
-              className={`h-3 w-3 rounded-full ${
-                isSessionActive ? "bg-emerald-400" : "bg-slate-300"
+              className={`h-2.5 w-2.5 rounded-full ${
+                isSessionActive ? "bg-blue-500" : "bg-slate-300"
               }`}
             />
             LIVE
           </div>
 
-          <div className="absolute bottom-[18%] left-14 z-10 max-w-[clamp(360px,38vw,680px)] text-white">
-            <p className="text-2xl font-semibold text-blue-300">질문</p>
-            <h1 className="mt-4 break-keep text-[clamp(44px,5vw,82px)] font-bold leading-[1.08] tracking-[-0.03em] drop-shadow-md">
+          <button
+            type="button"
+            aria-label="fullscreen"
+            className="absolute right-8 top-8 z-20 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-950/30 text-white shadow-lg backdrop-blur transition hover:bg-slate-950/45"
+          >
+            <Maximize2 className="h-5 w-5" />
+          </button>
+
+          <div className="absolute left-16 top-[40%] z-10 max-w-[clamp(360px,35vw,620px)] -translate-y-1/2 text-white">
+            <p className="text-[clamp(20px,1.6vw,28px)] font-bold text-blue-300">
+              질문
+            </p>
+            <h1 className="mt-5 break-keep text-[clamp(50px,5.2vw,88px)] font-bold leading-[1.08] tracking-normal drop-shadow-md">
               {questionTitle}
             </h1>
           </div>
 
-          <div className="absolute bottom-32 left-1/2 z-10 flex w-[min(520px,70vw)] -translate-x-1/2 items-end justify-center gap-1 md:w-[min(520px,40vw)]">
-            {Array.from({ length: 56 }).map((_, index) => {
-              const height =
-                8 + Math.abs(Math.sin(index * 0.72)) * 28 + (index % 7) * 2;
+          <div className="absolute bottom-14 left-1/2 z-20 flex w-[min(660px,54vw)] -translate-x-1/2 items-center gap-5 rounded-2xl border border-white/18 bg-slate-950/34 px-5 py-3 text-white shadow-2xl shadow-black/20 backdrop-blur-md">
+            <div className="min-w-[145px]">
+              <p className="text-base font-bold">
+                {isSessionActive ? "답변 중" : "답변 대기"}
+                <span className="ml-2 text-sm font-medium text-white/65">
+                  최대 90초
+                </span>
+              </p>
+            </div>
 
-              return (
+            <div className="flex h-10 flex-1 items-end justify-center gap-1 overflow-hidden">
+              {waveformBars.map((height, index) => (
                 <span
                   key={index}
-                  className="w-1 rounded-full bg-blue-400/90"
+                  className="w-1 rounded-full bg-blue-400"
                   style={{
-                    height: `${height}px`,
+                    height: `${Math.min(height, 30)}px`,
                     opacity: index % 4 === 0 ? 0.55 : 1,
                   }}
                 />
-              );
-            })}
-          </div>
+              ))}
+            </div>
 
-          <div className="absolute bottom-6 left-1/2 z-20 flex w-[min(520px,86vw)] -translate-x-1/2 flex-col items-center gap-3 rounded-2xl border border-white/20 bg-white/90 px-5 py-4 shadow-lg backdrop-blur md:w-[min(520px,42vw)]">
-            <p className="text-lg font-semibold text-slate-950">
-              {isSessionActive ? "답변 중..." : "답변 대기"}
-              <span className="ml-2 text-sm font-normal text-slate-500">
-                (최대 90초)
-              </span>
-            </p>
             <Button
               type="button"
-              variant="outline"
               onClick={endAnswer}
               disabled={!session || isFinishingAnswer}
-              className="h-12 w-full rounded-lg border-slate-300 bg-white text-base font-semibold text-blue-700 hover:bg-slate-50"
+              className="h-11 min-w-[124px] rounded-xl bg-blue-600 px-5 text-base font-bold text-white hover:bg-blue-700 disabled:bg-blue-500/70"
             >
-              <Square className="h-4 w-4 fill-slate-900 text-slate-900" />
-              {isFinishingAnswer ? "답변 종료 중" : "답변 종료"}
+              <Square className="h-3.5 w-3.5 fill-white text-white" />
+              {isFinishingAnswer ? "종료 중" : "답변 종료"}
             </Button>
           </div>
 
