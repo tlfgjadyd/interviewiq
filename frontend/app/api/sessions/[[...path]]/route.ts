@@ -19,10 +19,10 @@ type SessionRecord = {
 const sessions = new Map<string, SessionRecord>();
 
 const QUESTIONS = [
-  "Please introduce yourself and describe a backend project you are proud of.",
-  "What was the most difficult technical problem in that project, and how did you solve it?",
-  "How did you verify that your solution worked well in production?",
-  "Tell me about a time you had to collaborate under pressure.",
+  "자기소개를 부탁드립니다.",
+  "저희 회사에 지원하게 된 이유가 있나요?.",
+  "본인의 강점이 있다면 무엇인가요?",
+  "마지막으로 하실말씀 있으신가요?",
 ];
 const PHASE_GOAL = "로컬 mock 질문 흐름입니다. 실제 백엔드 연결 시 phase별 목표가 제공됩니다.";
 
