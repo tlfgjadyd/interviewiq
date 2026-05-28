@@ -1,10 +1,7 @@
 import React, { useRef, useState } from "react";
 import { useCamera } from "../../hooks/useCamera";
 import { useMediapipe } from "../../hooks/useMediaPipe";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@radix-ui/react-label";
-import { Badge } from "@/components/ui/badge";
-import { Activity, Eye, Hand, Maximize2 } from "lucide-react";
+import { Activity, Eye, Hand } from "lucide-react";
 import { useInterviewSession } from "@/context/InterviewSessionContext";
 
 const Camera: React.FC = () => {
@@ -12,7 +9,6 @@ const Camera: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
-  const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [panelPosition, setPanelPosition] = useState<{
     x: number;
     y: number;
@@ -26,16 +22,10 @@ const Camera: React.FC = () => {
     handPresence,
     facePresence,
     posePresence,
-    handDetectionCounter,
-    handDetectionDuration,
-    notFacingCounter,
-    notFacingDuration,
-    badPostureDetectionCounter,
-    badPostureDuration,
     isHandOnScreenRef,
     notFacingRef,
-    hasBadPostureRef
-  } = useMediapipe(videoRef, canvasRef, overlayEnabled, {
+    hasBadPostureRef,
+  } = useMediapipe(videoRef, canvasRef, true, {
     enabled: session?.status === "active" && isAnswerRecording,
     sessionId: session?.sessionId,
     answerTurnId: session?.answerTurnId,
@@ -49,32 +39,11 @@ const Camera: React.FC = () => {
     onVisionAnalysis: setLatestVision,
   });
 
-  const monitorItems = [
-    {
-      icon: Hand,
-      title: "손동작",
-      status: isHandOnScreenRef.current ? "주의" : "안정",
-      active: isHandOnScreenRef.current,
-      count: handDetectionCounter,
-      detail: `${handDetectionDuration.toFixed(1)}s`,
-    },
-    {
-      icon: Eye,
-      title: "시선",
-      status: notFacingRef.current ? "위험" : "안정",
-      active: notFacingRef.current,
-      count: notFacingCounter,
-      detail: `${notFacingDuration.toFixed(1)}s`,
-    },
-    {
-      icon: Activity,
-      title: "자세",
-      status: hasBadPostureRef.current ? "주의" : "안정",
-      active: hasBadPostureRef.current,
-      count: badPostureDetectionCounter,
-      detail: `${badPostureDuration.toFixed(1)}s`,
-    },
-  ];
+  const states = [
+    ["손", isHandOnScreenRef.current ? "주의" : "안정", isHandOnScreenRef.current],
+    ["시선", notFacingRef.current ? "주의" : "안정", notFacingRef.current],
+    ["자세", hasBadPostureRef.current ? "주의" : "안정", hasBadPostureRef.current],
+  ] as const;
 
   const movePanel = (clientX: number, clientY: number) => {
     const panel = panelRef.current;
@@ -112,11 +81,9 @@ const Camera: React.FC = () => {
   };
 
   const dragPanel = (event: React.PointerEvent<HTMLElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-      return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      movePanel(event.clientX, event.clientY);
     }
-
-    movePanel(event.clientX, event.clientY);
   };
 
   const stopDraggingPanel = (event: React.PointerEvent<HTMLElement>) => {
@@ -128,46 +95,30 @@ const Camera: React.FC = () => {
   return (
     <section
       ref={panelRef}
-      className="fixed bottom-6 left-24 z-30 w-[340px] rounded-lg border border-slate-200 bg-white p-3 shadow-xl shadow-slate-950/10 max-xl:left-6 max-lg:static max-lg:w-full max-lg:shadow-sm"
+      className="absolute bottom-12 right-8 z-30 w-[320px] overflow-hidden rounded-2xl border border-white/20 bg-slate-950/82 text-white shadow-2xl shadow-black/30 backdrop-blur-md max-xl:w-[280px] max-lg:static max-lg:w-full"
       style={
         panelPosition
           ? {
               left: panelPosition.x,
               top: panelPosition.y,
               bottom: "auto",
+              right: "auto",
             }
           : undefined
       }
     >
       <div
-        className="mb-3 flex cursor-move touch-none select-none items-center justify-between gap-3"
+        className="flex cursor-move touch-none select-none items-center gap-2 px-4 py-3 text-sm font-semibold"
         onPointerDown={startDraggingPanel}
         onPointerMove={dragPanel}
         onPointerUp={stopDraggingPanel}
         onPointerCancel={stopDraggingPanel}
       >
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold">면접 영상 분석</h2>
-          <p className="mt-0.5 truncate text-xs text-slate-500">
-            PiP 모니터링 · 드래그로 이동
-          </p>
-        </div>
-        <div
-          className="flex cursor-default items-center space-x-2 rounded-lg bg-slate-100 px-2 py-1.5"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <Switch
-            id="overlay-toggle"
-            checked={overlayEnabled}
-            onCheckedChange={() => setOverlayEnabled((prev) => !prev)}
-          />
-          <Label htmlFor="overlay-toggle" className="text-xs text-slate-600">
-            {overlayEnabled ? "Overlay" : "Clean"}
-          </Label>
-        </div>
+        <span className="h-2 w-2 rounded-full bg-emerald-400" />
+        나의 화면
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-950">
+      <div className="mx-4 overflow-hidden rounded-lg bg-slate-900">
         <div className="relative aspect-video w-full">
           <video
             ref={videoRef}
@@ -183,45 +134,31 @@ const Camera: React.FC = () => {
             className="absolute inset-0 h-full w-full"
             style={{ backgroundColor: "transparent" }}
           />
-          <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur">
-            <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            LIVE ANALYSIS
-          </div>
-          <div className="absolute right-3 top-3 rounded-full bg-black/45 p-1.5 text-white backdrop-blur">
-            <Maximize2 className="h-3.5 w-3.5" />
-          </div>
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        {monitorItems.map((item) => {
-          const Icon = item.icon;
+      <div className="mt-3 grid grid-cols-3 border-t border-white/10">
+        {states.map(([label, status, active]) => {
+          const Icon = label === "손" ? Hand : label === "시선" ? Eye : Activity;
 
           return (
             <div
-              key={item.title}
-              className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2"
+              key={label}
+              className="border-r border-white/10 px-3 py-3 text-center last:border-r-0"
             >
-              <div className="flex items-center gap-1.5 text-xs font-semibold">
-                <Icon className="h-3.5 w-3.5 text-slate-600" />
-                <span className="truncate">
-                  {item.title}
-                </span>
+              <div className="flex items-center justify-center gap-1 text-xs font-semibold text-white/80">
+                <Icon className="h-3.5 w-3.5" />
+                {label}
               </div>
-              <div className="mt-2 flex items-center justify-between gap-1">
-                <Badge
-                  className={`px-1.5 py-0 text-[10px] ${
-                    item.active
-                      ? "bg-red-100 text-red-700 hover:bg-red-100"
-                      : "bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
-                  }`}
-                >
-                  {item.status}
-                </Badge>
-                <span className="font-mono text-[10px] text-slate-500">
-                  {item.count}
-                </span>
-              </div>
+              <span
+                className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-bold ${
+                  active
+                    ? "bg-amber-500/18 text-amber-300"
+                    : "bg-emerald-500/18 text-emerald-300"
+                }`}
+              >
+                {status}
+              </span>
             </div>
           );
         })}

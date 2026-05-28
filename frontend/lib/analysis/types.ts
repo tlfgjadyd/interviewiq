@@ -288,6 +288,7 @@ export type VisionChunk = {
       headForward: boolean;
       gazeStable: boolean;
       gazeAwayDuration: number;
+      gazeAwayDurationMs?: number;
       gazePenalty: number;
     };
     gesture: {
@@ -308,6 +309,14 @@ export type VisionChunk = {
     };
     zScores: InterviewBehaviorAnalysis["zScores"];
     states: InterviewBehaviorAnalysis["states"];
+    quality?: {
+      frameCount: number;
+      validFrameRatio: number;
+      fullBodyDetectedRatio: number;
+      lowerBodyDetectedRatio?: number;
+      faceResolutionLevel?: "low" | "medium" | "high";
+      confidence?: number;
+    };
   };
 };
 
@@ -319,4 +328,17 @@ export type CreateVisionChunkInput = {
   t0: number;
   t1: number;
   context?: QuestionContext;
+};
+
+export type VisionChunkSample = {
+  analysis: InterviewBehaviorAnalysis;
+  elapsedMs: number;
+};
+
+export type CreateAggregatedVisionChunkInput = Omit<
+  CreateVisionChunkInput,
+  "analysis"
+> & {
+  samples: VisionChunkSample[];
+  expectedFrameCount?: number;
 };

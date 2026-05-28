@@ -10,6 +10,7 @@ export type {
   BehaviorEventType,
   BehaviorLevel,
   BehaviorMotionState,
+  CreateAggregatedVisionChunkInput,
   CreateVisionChunkInput,
   GestureBehaviorAnalysis,
   InterviewBehaviorAnalysis,
@@ -21,6 +22,7 @@ export type {
   SpeechSignals,
   UserBaseline,
   VisionChunk,
+  VisionChunkSample,
 } from "./analysis/types";
 
 export {
@@ -36,5 +38,6 @@ export { analyzePosture, isBadPosture } from "./analysis/postureAnalyzer";
 export {
   analyzeInterviewPosture,
   analyzeInterviewSegment,
+  createAggregatedVisionChunk,
   createVisionChunk,
 } from "./analysis/interviewBehaviorAnalyzer";

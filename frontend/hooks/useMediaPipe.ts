@@ -10,12 +10,13 @@ import { initializeFaceDetection } from "../lib/mediapipe/faceDetection";
 import { initializePoseDetection } from "../lib/mediapipe/poseDetection";
 import {
   analyzeInterviewPosture,
-  createVisionChunk,
+  createAggregatedVisionChunk,
   isFacingForward,
   isBadPosture,
   type AnalyzeInterviewPostureInput,
   type InterviewBehaviorAnalysis,
   type QuestionContext,
+  type VisionChunkSample,
 } from "../lib/analytics";
 import {
   drawHandLandmarks,
@@ -34,6 +35,12 @@ export type UseMediaPipeOptions = {
   enabled?: boolean;
   questionContext?: QuestionContext;
   onVisionAnalysis?: (analysis: InterviewBehaviorAnalysis) => void;
+  onCalibrationFrame?: (frame: {
+    handPresence: boolean;
+    facePresence: boolean;
+    posePresence: boolean;
+    poseLandmarks?: AnalyzeInterviewPostureInput["poseLandmarks"];
+  }) => void;
 };
 
 export const useMediapipe = (
@@ -71,6 +78,7 @@ export const useMediapipe = (
   const lastDebugLogTimeRef = useRef(0);
   const optionsRef = useRef(options);
   const lastSentVisionChunkRef = useRef<string | null>(null);
+  const visionChunkSamplesRef = useRef<VisionChunkSample[]>([]);
 
   const { updateMetrics } = useMetrics();
 
@@ -80,6 +88,7 @@ export const useMediapipe = (
 
   useEffect(() => {
     lastSentVisionChunkRef.current = null;
+    visionChunkSamplesRef.current = [];
   }, [options.sessionId, options.answerTurnId, options.turnStartedAtMs]);
 
   useEffect(() => {
@@ -325,6 +334,12 @@ export const useMediapipe = (
 
       if (poseLandmarks || handLandmarks || faceLandmarks) {
         const mediaPipeOptions = optionsRef.current;
+        mediaPipeOptions.onCalibrationFrame?.({
+          handPresence: !!handLandmarks?.length,
+          facePresence: !!faceLandmarks,
+          posePresence: !!poseLandmarks,
+          poseLandmarks,
+        });
         const currentTimeSeconds =
           mediaPipeOptions.turnStartedAtMs !== undefined
             ? Math.max(
@@ -361,6 +376,16 @@ export const useMediapipe = (
           mediaPipeOptions.turnStartedAtMs !== undefined &&
           mediaPipeOptions.backendBaseUrl
         ) {
+          const elapsedMs = Math.max(
+            currentTime - mediaPipeOptions.turnStartedAtMs,
+            0
+          );
+
+          visionChunkSamplesRef.current.push({
+            analysis,
+            elapsedMs,
+          });
+
           const timing = getCompletedChunkTiming(
             currentTime,
             mediaPipeOptions.turnStartedAtMs,
@@ -373,8 +398,16 @@ export const useMediapipe = (
           if (timing && sentKey !== lastSentVisionChunkRef.current) {
             lastSentVisionChunkRef.current = sentKey;
 
-            const visionChunk = createVisionChunk({
-              analysis,
+            const samples = visionChunkSamplesRef.current.filter(
+              (sample) => sample.elapsedMs >= timing.t0 && sample.elapsedMs <= timing.t1
+            );
+            const expectedFrameCount = Math.max(
+              Math.round(mediaPipeOptions.chunkMs / (1000 / 30)),
+              1
+            );
+            const visionChunk = createAggregatedVisionChunk({
+              samples,
+              expectedFrameCount,
               sessionId: mediaPipeOptions.sessionId,
               answerTurnId: mediaPipeOptions.answerTurnId,
               chunkId: timing.chunkId,
@@ -382,6 +415,10 @@ export const useMediapipe = (
               t1: timing.t1,
               context: mediaPipeOptions.questionContext,
             });
+
+            visionChunkSamplesRef.current = visionChunkSamplesRef.current.filter(
+              (sample) => sample.elapsedMs > timing.t1
+            );
 
             fetch(
               `${mediaPipeOptions.backendBaseUrl}/api/sessions/${mediaPipeOptions.sessionId}/vision-chunks`,

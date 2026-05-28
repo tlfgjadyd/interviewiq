@@ -13,7 +13,10 @@ import { createBehaviorEvents } from "./events";
 import { clampScore, ema, getDeltaSeconds, scaleMovement } from "./math";
 import {
   AnalyzeInterviewPostureInput,
+  CreateAggregatedVisionChunkInput,
   CreateVisionChunkInput,
+  BehaviorEvent,
+  BehaviorLevel,
   InterviewBehaviorAnalysis,
   VisionChunk,
 } from "./types";
@@ -370,6 +373,299 @@ export const createVisionChunk = ({
       states: analysis.states,
     },
   };
+};
+
+const average = (values: number[]): number => {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+};
+
+const max = (values: number[]): number => {
+  return values.length ? Math.max(...values) : 0;
+};
+
+const averageOptional = (values: Array<number | undefined>): number | undefined => {
+  const numericValues = values.filter(
+    (value): value is number => value !== undefined && Number.isFinite(value)
+  );
+
+  return numericValues.length ? average(numericValues) : undefined;
+};
+
+const worstLevel = (levels: BehaviorLevel[]): BehaviorLevel => {
+  const order: Record<BehaviorLevel, number> = {
+    good: 0,
+    caution: 1,
+    warning: 2,
+    bad: 3,
+  };
+
+  return levels.reduce(
+    (worst, level) => (order[level] > order[worst] ? level : worst),
+    "good" as BehaviorLevel
+  );
+};
+
+const uniqueReasons = (samples: InterviewBehaviorAnalysis[]): string[] => {
+  const seen = new Set<string>();
+  const reasons: string[] = [];
+
+  for (const sample of samples) {
+    for (const reason of sample.reasons) {
+      if (!seen.has(reason)) {
+        seen.add(reason);
+        reasons.push(reason);
+      }
+    }
+  }
+
+  return reasons.slice(0, 6);
+};
+
+const mergeBehaviorEvents = (
+  samples: InterviewBehaviorAnalysis[]
+): BehaviorEvent[] => {
+  const events = samples
+    .flatMap((sample) => sample.events)
+    .filter((event) => Number.isFinite(event.t0) && Number.isFinite(event.t1))
+    .sort((a, b) => a.t0 - b.t0 || a.t1 - b.t1);
+  const merged: BehaviorEvent[] = [];
+
+  for (const event of events) {
+    const previous = merged[merged.length - 1];
+
+    if (previous && previous.type === event.type && event.t0 - previous.t1 <= 0.5) {
+      const isMoreConfident = event.confidence > previous.confidence;
+
+      previous.t1 = Math.max(previous.t1, event.t1);
+      previous.confidence = Math.max(previous.confidence, event.confidence);
+      previous.severity = isMoreConfident ? event.severity : previous.severity;
+      continue;
+    }
+
+    merged.push({ ...event });
+  }
+
+  return merged.slice(0, 20);
+};
+
+const ratio = (samples: InterviewBehaviorAnalysis[], predicate: (sample: InterviewBehaviorAnalysis) => boolean) => {
+  return samples.length ? samples.filter(predicate).length / samples.length : 0;
+};
+
+export const createAggregatedVisionChunk = ({
+  samples,
+  expectedFrameCount,
+  ...chunkInput
+}: CreateAggregatedVisionChunkInput): VisionChunk => {
+  const analyses = samples.map((sample) => sample.analysis);
+  const fallback = analyses[analyses.length - 1];
+
+  if (!fallback) {
+    return createVisionChunk({
+      ...chunkInput,
+      analysis: {
+        isBadPosture: false,
+        score: 0,
+        behaviorRiskScore: 0,
+        nonverbalRiskScore: 0,
+        level: "good",
+        reasons: [],
+        events: [],
+        signals: {
+          postureCollapse: 0,
+          fidgetScore: 0,
+          gazePenalty: 0,
+          bodySway: 0,
+          legMovement: 0,
+          kneeMovement: 0,
+          kneeVelocity: 0,
+          kneeVariance: 0,
+          kneeZeroCrossingRate: 0,
+          kneeZeroCrossingScore: 0,
+          legShakingScore: 0,
+          handMovement: 0,
+          handVelocity: 0,
+          handJerk: 0,
+          movementRepetition: 0,
+          handToFaceProximity: 0,
+          upperBodyMovement: 0,
+          gazeAwayDuration: 0,
+          fidget: 0,
+        },
+        zScores: {
+          postureCollapseZ: 0,
+          handMovementZ: 0,
+          gazeAwayZ: 0,
+          bodySwayZ: 0,
+        },
+        ema: {
+          fidget: 0,
+          fidgetScore: 0,
+          legMovement: 0,
+          posture: 0,
+          postureCollapse: 0,
+        },
+        motionState: {
+          handVelocityRaw: 0,
+          handAccelerationRaw: 0,
+          legVelocityRaw: 0,
+          legAccelerationRaw: 0,
+          recentHandMovementScores: [],
+          recentLegMovementScores: [],
+          recentKneeSignals: [],
+          gazeAwayDuration: 0,
+          isFacingForward: false,
+        },
+        states: {
+          isBadPosture: false,
+          isFidgeting: false,
+          isFacingForward: false,
+          isGazeUnstable: false,
+          isGoodSegment: false,
+          isLegMovementHigh: false,
+          isLegShaking: false,
+          isPostureCollapsed: false,
+          isNervous: false,
+          isLookingAway: false,
+        },
+      },
+    });
+  }
+
+  const gazeSamples = analyses.filter((sample) => sample.gaze);
+  const validFrameRatio =
+    expectedFrameCount && expectedFrameCount > 0
+      ? Math.min(samples.length / expectedFrameCount, 1)
+      : 1;
+  const aggregatedAnalysis: InterviewBehaviorAnalysis = {
+    ...fallback,
+    isBadPosture: ratio(analyses, (sample) => sample.states.isBadPosture) >= 0.2,
+    score: average(analyses.map((sample) => sample.score)),
+    behaviorRiskScore: average(analyses.map((sample) => sample.behaviorRiskScore)),
+    nonverbalRiskScore: average(
+      analyses.map((sample) => sample.nonverbalRiskScore)
+    ),
+    level: worstLevel(analyses.map((sample) => sample.level)),
+    reasons: uniqueReasons(analyses),
+    events: mergeBehaviorEvents(analyses),
+    signals: {
+      postureCollapse: average(
+        analyses.map((sample) => sample.signals.postureCollapse)
+      ),
+      fidgetScore: average(analyses.map((sample) => sample.signals.fidgetScore)),
+      gazePenalty: average(analyses.map((sample) => sample.signals.gazePenalty)),
+      bodySway: average(analyses.map((sample) => sample.signals.bodySway)),
+      legMovement: average(analyses.map((sample) => sample.signals.legMovement)),
+      kneeMovement: average(analyses.map((sample) => sample.signals.kneeMovement)),
+      kneeVelocity: average(analyses.map((sample) => sample.signals.kneeVelocity)),
+      kneeVariance: average(analyses.map((sample) => sample.signals.kneeVariance)),
+      kneeZeroCrossingRate: average(
+        analyses.map((sample) => sample.signals.kneeZeroCrossingRate)
+      ),
+      kneeZeroCrossingScore: average(
+        analyses.map((sample) => sample.signals.kneeZeroCrossingScore)
+      ),
+      legShakingScore: max(
+        analyses.map((sample) => sample.signals.legShakingScore)
+      ),
+      handMovement: average(analyses.map((sample) => sample.signals.handMovement)),
+      handVelocity: average(analyses.map((sample) => sample.signals.handVelocity)),
+      handJerk: max(analyses.map((sample) => sample.signals.handJerk)),
+      movementRepetition: average(
+        analyses.map((sample) => sample.signals.movementRepetition)
+      ),
+      handToFaceProximity: max(
+        analyses.map((sample) => sample.signals.handToFaceProximity)
+      ),
+      upperBodyMovement: average(
+        analyses.map((sample) => sample.signals.upperBodyMovement)
+      ),
+      gazeAwayDuration: average(
+        analyses.map((sample) => sample.signals.gazeAwayDuration)
+      ),
+      fidget: average(analyses.map((sample) => sample.signals.fidget)),
+    },
+    zScores: {
+      postureCollapseZ: average(
+        analyses.map((sample) => sample.zScores.postureCollapseZ)
+      ),
+      handMovementZ: average(
+        analyses.map((sample) => sample.zScores.handMovementZ)
+      ),
+      gazeAwayZ: average(analyses.map((sample) => sample.zScores.gazeAwayZ)),
+      bodySwayZ: average(analyses.map((sample) => sample.zScores.bodySwayZ)),
+      fidgetZ: averageOptional(analyses.map((sample) => sample.zScores.fidgetZ)),
+      legMovementZ: averageOptional(
+        analyses.map((sample) => sample.zScores.legMovementZ)
+      ),
+      postureZ: averageOptional(analyses.map((sample) => sample.zScores.postureZ)),
+      speechRateZ: averageOptional(
+        analyses.map((sample) => sample.zScores.speechRateZ)
+      ),
+      pauseZ: averageOptional(analyses.map((sample) => sample.zScores.pauseZ)),
+      pitchInstabilityZ: averageOptional(
+        analyses.map((sample) => sample.zScores.pitchInstabilityZ)
+      ),
+      fillerZ: averageOptional(analyses.map((sample) => sample.zScores.fillerZ)),
+      volumeInstabilityZ: averageOptional(
+        analyses.map((sample) => sample.zScores.volumeInstabilityZ)
+      ),
+    },
+    gaze: {
+      isFacingForward:
+        ratio(analyses, (sample) => sample.gaze?.isFacingForward === true) >= 0.6,
+      isLookingAway:
+        ratio(analyses, (sample) => sample.gaze?.isLookingAway === true) >= 0.2,
+      eyeCentered:
+        ratio(analyses, (sample) => sample.gaze?.eyeCentered === true) >= 0.6,
+      headForward:
+        ratio(analyses, (sample) => sample.gaze?.headForward === true) >= 0.6,
+      gazeStable:
+        ratio(analyses, (sample) => sample.gaze?.gazeStable === true) >= 0.6,
+      gazeAwayDuration:
+        ratio(analyses, (sample) => sample.gaze?.isLookingAway === true) *
+        ((chunkInput.t1 - chunkInput.t0) / 1000),
+    },
+    states: {
+      isBadPosture: ratio(analyses, (sample) => sample.states.isBadPosture) >= 0.2,
+      isFidgeting: ratio(analyses, (sample) => sample.states.isFidgeting) >= 0.2,
+      isFacingForward:
+        ratio(analyses, (sample) => sample.states.isFacingForward) >= 0.6,
+      isGazeUnstable:
+        ratio(analyses, (sample) => sample.states.isGazeUnstable) >= 0.2,
+      isGoodSegment: ratio(analyses, (sample) => sample.states.isGoodSegment) >= 0.8,
+      isLegMovementHigh:
+        ratio(analyses, (sample) => sample.states.isLegMovementHigh) >= 0.2,
+      isLegShaking:
+        ratio(analyses, (sample) => sample.states.isLegShaking) >= 0.15,
+      isPostureCollapsed:
+        ratio(analyses, (sample) => sample.states.isPostureCollapsed) >= 0.2,
+      isNervous: ratio(analyses, (sample) => sample.states.isNervous) >= 0.2,
+      isLookingAway: ratio(analyses, (sample) => sample.states.isLookingAway) >= 0.2,
+    },
+  };
+  const chunk = createVisionChunk({
+    ...chunkInput,
+    analysis: aggregatedAnalysis,
+  });
+
+  chunk.vision.quality = {
+    frameCount: samples.length,
+    validFrameRatio,
+    fullBodyDetectedRatio: validFrameRatio,
+    faceResolutionLevel: gazeSamples.length > 0 ? "medium" : "low",
+    confidence: Math.min(validFrameRatio, 1),
+  };
+  chunk.vision.gaze.gazeAwayDuration = aggregatedAnalysis.gaze?.gazeAwayDuration ?? 0;
+  chunk.vision.gaze.gazeAwayDurationMs = Math.round(
+    (aggregatedAnalysis.gaze?.gazeAwayDuration ?? 0) * 1000
+  );
+
+  return chunk;
 };
 
 export const analyzeInterviewSegment = analyzeInterviewPosture;
