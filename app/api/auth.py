@@ -8,23 +8,21 @@ from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
     create_access_token,
     create_oauth_state,
-    verify_access_token,
     verify_oauth_state,
 )
 from app.core.config import settings
+from app.core.deps import get_current_user
 from app.db.database import get_db
 from app.db.models import User
 from app.schemas.auth import AuthUser, GoogleLoginRequest, GoogleLoginResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-bearer_scheme = HTTPBearer(auto_error=False)
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -207,19 +205,7 @@ async def login_with_google(
 
 
 @router.get("/me", response_model=AuthUser)
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    db: AsyncSession = Depends(get_db),
+async def read_current_user(
+    user: User = Depends(get_current_user),
 ):
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-
-    token_payload = verify_access_token(credentials.credentials)
-    if token_payload is None:
-        raise HTTPException(status_code=401, detail="Invalid bearer token")
-
-    result = await db.execute(select(User).where(User.id == token_payload.get("sub")))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found")
     return _to_auth_user(user)
