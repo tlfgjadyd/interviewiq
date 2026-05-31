@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.db.database import init_db
 from app.core.redis import init_redis
+from app.api.assets import router as assets_router
 from app.api.auth import router as auth_router
 from app.api.courses import router as courses_router
 from app.api.rag import router as rag_router
@@ -29,6 +30,7 @@ app.include_router(sessions_router)
 app.include_router(rag_router)
 app.include_router(auth_router)
 app.include_router(courses_router)
+app.include_router(assets_router)
 
 @app.get("/health")
 async def health():

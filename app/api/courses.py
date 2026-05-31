@@ -27,6 +27,12 @@ from app.schemas.course import (
 from app.schemas.session import SessionCreate
 
 router = APIRouter(prefix="/api", tags=["courses"])
+VALID_TARGET_PHASES = {
+    "opening",
+    "project_competency",
+    "collaboration_problem_solving",
+    "fit_closing",
+}
 
 
 def _course_response(course: Course) -> CourseResponse:
@@ -110,6 +116,51 @@ async def _get_user_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+async def _recommended_target_phase(
+    *,
+    db: AsyncSession,
+    user_id: str,
+    course_id: str,
+) -> str | None:
+    result = await db.execute(
+        select(Report)
+        .where(
+            Report.course_id == course_id,
+            Report.user_id == user_id,
+            Report.status == "ready",
+        )
+        .order_by(Report.created_at.desc())
+    )
+    for report in result.scalars().all():
+        metrics = report.metrics if isinstance(report.metrics, dict) else {}
+        recommendation = metrics.get("drillRecommendation")
+        if not isinstance(recommendation, dict):
+            continue
+        target_phase = recommendation.get("targetPhase")
+        if isinstance(target_phase, str) and target_phase in VALID_TARGET_PHASES:
+            return target_phase
+    return None
+
+
+async def _resolve_target_phase(
+    *,
+    db: AsyncSession,
+    user_id: str,
+    course_id: str,
+    session_type: str,
+    requested_target_phase: str | None,
+) -> str | None:
+    if requested_target_phase:
+        return requested_target_phase
+    if session_type != "drill":
+        return None
+    return await _recommended_target_phase(
+        db=db,
+        user_id=user_id,
+        course_id=course_id,
+    )
 
 
 @router.post("/courses", response_model=CourseResponse)
@@ -218,6 +269,13 @@ async def create_course_session(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_user_course(db=db, user_id=current_user.id, course_id=course_id)
+    target_phase = await _resolve_target_phase(
+        db=db,
+        user_id=current_user.id,
+        course_id=course_id,
+        session_type=payload.sessionType,
+        requested_target_phase=payload.targetPhase,
+    )
     session = Session(
         id=f"s_{uuid.uuid4().hex[:12]}",
         course_id=course_id,
@@ -225,7 +283,7 @@ async def create_course_session(
         session_type=payload.sessionType,
         cycle_index=payload.cycleIndex,
         drill_index=payload.drillIndex,
-        target_phase=payload.targetPhase,
+        target_phase=target_phase,
         status=payload.status,
         question_index=payload.questionIndex,
         total_questions=payload.totalQuestions,
@@ -245,6 +303,13 @@ async def start_course_session(
     db: AsyncSession = Depends(get_db),
 ):
     course = await _get_user_course(db=db, user_id=current_user.id, course_id=course_id)
+    target_phase = await _resolve_target_phase(
+        db=db,
+        user_id=current_user.id,
+        course_id=course_id,
+        session_type=payload.sessionType,
+        requested_target_phase=payload.targetPhase,
+    )
     session_id = f"s_{uuid.uuid4().hex[:12]}"
     session = Session(
         id=session_id,
@@ -253,7 +318,7 @@ async def start_course_session(
         session_type=payload.sessionType,
         cycle_index=payload.cycleIndex,
         drill_index=payload.drillIndex,
-        target_phase=payload.targetPhase,
+        target_phase=target_phase,
         status="active",
         question_index=1,
         total_questions=payload.totalQuestions,
@@ -281,7 +346,7 @@ async def start_course_session(
             "sessionType": payload.sessionType,
             "cycleIndex": payload.cycleIndex,
             "drillIndex": payload.drillIndex,
-            "targetPhase": payload.targetPhase,
+            "targetPhase": target_phase,
             "runtimeSource": "course_session_start",
         },
     )

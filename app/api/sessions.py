@@ -733,33 +733,137 @@ def _build_report_metrics(
         if signals.get("paceHint") == "fast":
             fast_pace_count += 1
 
+    long_silence_threshold_ms = 3000
     answer_texts = [str(analysis.get("answerText") or "") for analysis in answered_turns]
     answer_lengths = [len(text.strip()) for text in answer_texts if text.strip()]
     transcript_sources: dict[str, int] = {}
     phase_metrics: dict[str, dict[str, Any]] = {}
+    answer_phase_by_turn: dict[str, str] = {}
+
+    def phase_bucket(phase: str) -> dict[str, Any]:
+        return phase_metrics.setdefault(
+            phase,
+            {
+                "answerCount": 0,
+                "totalAnswerLengthChars": 0,
+                "visionChunkCount": 0,
+                "audioSignalChunkCount": 0,
+                "gazeAwayCount": 0,
+                "totalGazeAwayMs": 0,
+                "badPostureCount": 0,
+                "totalBadPostureMs": 0,
+                "longSilenceCount": 0,
+                "totalSilenceMs": 0,
+                "_behaviorRiskScores": [],
+                "_nonverbalRiskScores": [],
+                "_gazePenalties": [],
+                "_speakingRatios": [],
+                "_rmsVolumes": [],
+            },
+        )
+
     for analysis in answered_turns:
         source = str(analysis.get("answerTextSource") or "none")
         transcript_sources[source] = transcript_sources.get(source, 0) + 1
         progress = analysis.get("interviewProgress")
         phase = progress.get("phase") if isinstance(progress, dict) else None
         if phase:
-            phase_bucket = phase_metrics.setdefault(
-                str(phase),
-                {"answerCount": 0, "totalAnswerLengthChars": 0},
-            )
+            normalized_phase = str(phase)
+            answer_turn_id = analysis.get("answerTurnId")
+            if answer_turn_id:
+                answer_phase_by_turn[str(answer_turn_id)] = normalized_phase
+            bucket = phase_bucket(normalized_phase)
             answer_text = str(analysis.get("answerText") or "").strip()
-            phase_bucket["answerCount"] += 1
-            phase_bucket["totalAnswerLengthChars"] += len(answer_text)
+            bucket["answerCount"] += 1
+            bucket["totalAnswerLengthChars"] += len(answer_text)
+
+    for chunk in chunks:
+        answer_turn_id = str(chunk.get("answerTurnId") or "")
+        phase = answer_phase_by_turn.get(answer_turn_id)
+        if not phase:
+            continue
+        bucket = phase_bucket(phase)
+        duration_ms = _chunk_duration_ms(chunk)
+
+        vision = chunk.get("vision") if isinstance(chunk.get("vision"), dict) else None
+        if vision:
+            bucket["visionChunkCount"] += 1
+            behavior = _number(vision.get("behaviorRiskScore"))
+            nonverbal = _number(vision.get("nonverbalRiskScore"))
+            if behavior is not None:
+                bucket["_behaviorRiskScores"].append(behavior)
+            if nonverbal is not None:
+                bucket["_nonverbalRiskScores"].append(nonverbal)
+
+            gaze = vision.get("gaze") if isinstance(vision.get("gaze"), dict) else {}
+            gaze_penalty = _number(gaze.get("gazePenalty"))
+            if gaze_penalty is not None:
+                bucket["_gazePenalties"].append(gaze_penalty)
+            is_looking_away = bool(gaze.get("isLookingAway"))
+            if is_looking_away:
+                bucket["gazeAwayCount"] += 1
+            gaze_away_duration = _number(gaze.get("gazeAwayDurationMs"))
+            if gaze_away_duration is not None:
+                bucket["totalGazeAwayMs"] += int(gaze_away_duration)
+            elif is_looking_away:
+                bucket["totalGazeAwayMs"] += duration_ms
+
+            posture = vision.get("posture") if isinstance(vision.get("posture"), dict) else {}
+            if posture.get("isBadPosture") or posture.get("isPostureCollapsed"):
+                bucket["badPostureCount"] += 1
+                bucket["totalBadPostureMs"] += duration_ms
+
+        audio_signals = (
+            chunk.get("realtimeAudioSignals")
+            if isinstance(chunk.get("realtimeAudioSignals"), dict)
+            else None
+        )
+        if audio_signals:
+            bucket["audioSignalChunkCount"] += 1
+            speaking_ratio = _number(audio_signals.get("isSpeakingRatio"))
+            rms_volume = _number(audio_signals.get("rmsVolume"))
+            silence_ms = _number(audio_signals.get("silenceDurationMs"))
+            if speaking_ratio is not None:
+                bucket["_speakingRatios"].append(speaking_ratio)
+            if rms_volume is not None:
+                bucket["_rmsVolumes"].append(rms_volume)
+            if silence_ms is not None:
+                bucket["totalSilenceMs"] += int(silence_ms)
+                if silence_ms >= long_silence_threshold_ms:
+                    bucket["longSilenceCount"] += 1
 
     for phase_bucket in phase_metrics.values():
         answer_count = int(phase_bucket["answerCount"])
         total_chars = int(phase_bucket["totalAnswerLengthChars"])
+        vision_count = int(phase_bucket["visionChunkCount"])
+        audio_count = int(phase_bucket["audioSignalChunkCount"])
         phase_bucket["averageAnswerLengthChars"] = (
             round(total_chars / answer_count, 2) if answer_count else 0
         )
+        phase_bucket["averageBehaviorRiskScore"] = _average(
+            [float(value) for value in phase_bucket.pop("_behaviorRiskScores", [])]
+        )
+        phase_bucket["averageNonverbalRiskScore"] = _average(
+            [float(value) for value in phase_bucket.pop("_nonverbalRiskScores", [])]
+        )
+        phase_bucket["averageGazePenalty"] = _average(
+            [float(value) for value in phase_bucket.pop("_gazePenalties", [])]
+        )
+        phase_bucket["gazeAwayRatio"] = _ratio(int(phase_bucket["gazeAwayCount"]), vision_count)
+        phase_bucket["badPostureRatio"] = _ratio(
+            int(phase_bucket["badPostureCount"]),
+            vision_count,
+        )
+        phase_bucket["averageSpeakingRatio"] = _average(
+            [float(value) for value in phase_bucket.pop("_speakingRatios", [])]
+        )
+        phase_bucket["averageRmsVolume"] = _average(
+            [float(value) for value in phase_bucket.pop("_rmsVolumes", [])]
+        )
+        phase_bucket["longSilenceThresholdMs"] = long_silence_threshold_ms
 
     total_silence_ms = int(sum(silence_ms_values))
-    long_silence_threshold_ms = 3000
+    drill_recommendation = _calculate_phase_weakness(phase_metrics)
 
     return {
         "schemaVersion": "metrics_v1",
@@ -805,6 +909,132 @@ def _build_report_metrics(
             "totalAnswerLengthChars": sum(answer_lengths),
         },
         "phase": phase_metrics,
+        "drillRecommendation": drill_recommendation,
+    }
+
+
+def _build_answer_chunk_metrics(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    vision_chunks = [chunk for chunk in chunks if isinstance(chunk.get("vision"), dict)]
+    audio_signal_chunks = [
+        chunk for chunk in chunks if isinstance(chunk.get("realtimeAudioSignals"), dict)
+    ]
+    behavior_scores = []
+    gaze_away_count = 0
+    total_gaze_away_ms = 0
+    speaking_ratios = []
+    silence_values = []
+
+    for chunk in vision_chunks:
+        vision = chunk["vision"]
+        behavior = _number(vision.get("behaviorRiskScore"))
+        if behavior is not None:
+            behavior_scores.append(behavior)
+        gaze = vision.get("gaze") if isinstance(vision.get("gaze"), dict) else {}
+        is_looking_away = bool(gaze.get("isLookingAway"))
+        if is_looking_away:
+            gaze_away_count += 1
+        gaze_away_duration = _number(gaze.get("gazeAwayDurationMs"))
+        if gaze_away_duration is not None:
+            total_gaze_away_ms += int(gaze_away_duration)
+        elif is_looking_away:
+            total_gaze_away_ms += _chunk_duration_ms(chunk)
+
+    for chunk in audio_signal_chunks:
+        signals = chunk["realtimeAudioSignals"]
+        speaking_ratio = _number(signals.get("isSpeakingRatio"))
+        silence_ms = _number(signals.get("silenceDurationMs"))
+        if speaking_ratio is not None:
+            speaking_ratios.append(speaking_ratio)
+        if silence_ms is not None:
+            silence_values.append(silence_ms)
+
+    return {
+        "chunkCount": len(chunks),
+        "visionChunkCount": len(vision_chunks),
+        "audioSignalChunkCount": len(audio_signal_chunks),
+        "averageBehaviorRiskScore": _average(behavior_scores),
+        "gazeAwayRatio": _ratio(gaze_away_count, len(vision_chunks)),
+        "totalGazeAwayMs": total_gaze_away_ms,
+        "averageSpeakingRatio": _average(speaking_ratios),
+        "totalSilenceMs": int(sum(silence_values)),
+    }
+
+
+def _bounded_score(value: float | None, *, scale: float = 100.0) -> float:
+    if value is None:
+        return 0.0
+    return max(0.0, min(float(value) / scale * 100.0, 100.0))
+
+
+def _calculate_phase_weakness(phase_metrics: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    phase_scores: dict[str, dict[str, Any]] = {}
+    for phase, metrics in phase_metrics.items():
+        nonverbal_score = _bounded_score(_number(metrics.get("averageNonverbalRiskScore")))
+        gaze_score = _bounded_score(_number(metrics.get("gazeAwayRatio")), scale=1.0)
+        posture_score = _bounded_score(_number(metrics.get("badPostureRatio")), scale=1.0)
+        silence_count = _number(metrics.get("longSilenceCount")) or 0.0
+        silence_score = min(silence_count * 20.0, 100.0)
+
+        speaking_ratio = _number(metrics.get("averageSpeakingRatio"))
+        speaking_score = 0.0
+        if speaking_ratio is not None and speaking_ratio < 0.45:
+            speaking_score = min((0.45 - speaking_ratio) / 0.45 * 100.0, 100.0)
+
+        answer_length = _number(metrics.get("averageAnswerLengthChars"))
+        content_score = 0.0
+        if answer_length is not None and answer_length < 120:
+            content_score = min((120 - answer_length) / 120 * 100.0, 100.0)
+
+        weakness_score = round(
+            nonverbal_score * 0.25
+            + gaze_score * 0.2
+            + posture_score * 0.15
+            + silence_score * 0.2
+            + speaking_score * 0.1
+            + content_score * 0.1,
+            2,
+        )
+
+        reasons = []
+        if nonverbal_score >= 50:
+            reasons.append("비언어 위험도 평균이 높습니다.")
+        if gaze_score >= 35:
+            reasons.append("시선 이탈 비율이 높습니다.")
+        if posture_score >= 35:
+            reasons.append("자세 불안정 비율이 높습니다.")
+        if silence_score >= 40:
+            reasons.append("긴 침묵 구간이 반복되었습니다.")
+        if speaking_score >= 35:
+            reasons.append("말하기 비율이 낮게 나타났습니다.")
+        if content_score >= 35:
+            reasons.append("답변 길이가 짧아 근거 설명이 부족할 수 있습니다.")
+        if not reasons:
+            reasons.append("상대적으로 보완 우선순위가 높은 phase입니다.")
+
+        metrics["weaknessScore"] = weakness_score
+        metrics["weaknessReasons"] = reasons
+        phase_scores[phase] = {
+            "weaknessScore": weakness_score,
+            "reasons": reasons,
+        }
+
+    if not phase_scores:
+        return {
+            "targetPhase": None,
+            "weaknessScore": None,
+            "phaseScores": {},
+            "reasons": [],
+        }
+
+    target_phase, target = max(
+        phase_scores.items(),
+        key=lambda item: (item[1]["weaknessScore"], item[0]),
+    )
+    return {
+        "targetPhase": target_phase,
+        "weaknessScore": target["weaknessScore"],
+        "phaseScores": phase_scores,
+        "reasons": target["reasons"],
     }
 
 
@@ -829,12 +1059,19 @@ def _build_session_report(
         for analysis in answered_turns
         if isinstance(analysis.get("nonverbalFeedback"), dict)
     ]
+    chunks_by_turn: dict[str, list[dict[str, Any]]] = {}
+    for chunk in chunks:
+        answer_turn_id = str(chunk.get("answerTurnId") or "")
+        if answer_turn_id:
+            chunks_by_turn.setdefault(answer_turn_id, []).append(chunk)
+
     question_reports = []
     for analysis in answered_turns:
         progress = analysis.get("interviewProgress", {})
+        answer_turn_id = str(analysis.get("answerTurnId") or "")
         question_reports.append(
             {
-                "answerTurnId": analysis.get("answerTurnId"),
+                "answerTurnId": answer_turn_id,
                 "questionIndex": progress.get("questionIndex"),
                 "phase": progress.get("phase"),
                 "phaseGoal": progress.get("phaseGoal"),
@@ -843,6 +1080,7 @@ def _build_session_report(
                 "transcription": analysis.get("transcription"),
                 "contentFeedback": analysis.get("contentFeedback", []),
                 "nonverbalFeedback": analysis.get("nonverbalFeedback", {}),
+                "metrics": _build_answer_chunk_metrics(chunks_by_turn.get(answer_turn_id, [])),
                 "endedBy": analysis.get("endedBy"),
                 "endedAt": analysis.get("endedAt"),
             }
@@ -857,6 +1095,13 @@ def _build_session_report(
         "긴 침묵이나 시선 이탈 구간은 최종 리포트에서 구간별로 확인하고 다음 연습 때 줄여봅니다.",
         "마지막 답변에서는 직무와 연결되는 핵심 강점을 한 문장으로 정리하는 연습이 좋습니다.",
     ]
+    metrics = _build_report_metrics(meta=meta, chunks=chunks, analyses=analyses)
+    drill_recommendation = metrics.get("drillRecommendation", {})
+    target_phase = (
+        drill_recommendation.get("targetPhase")
+        if isinstance(drill_recommendation, dict)
+        else None
+    )
 
     return {
         "sessionId": session_id,
@@ -867,7 +1112,7 @@ def _build_session_report(
         "interviewType": meta.get("interviewType"),
         "totalQuestions": meta.get("totalQuestions"),
         "answeredQuestions": len(answered_turns),
-        "metrics": _build_report_metrics(meta=meta, chunks=chunks, analyses=analyses),
+        "metrics": metrics,
         "overallSummary": summary_sentences,
         "overallFeedback": {
             "content": "답변 내용은 역할, 과정, 결과 근거가 함께 드러날수록 설득력이 높아집니다.",
@@ -879,6 +1124,13 @@ def _build_session_report(
         "questions": question_reports,
         "nextPractice": {
             "recommendedQuestion": "가장 자신 있는 프로젝트 경험을 STAR 구조로 1분 안에 다시 설명해 보세요.",
+            "targetPhase": target_phase,
+            "weaknessScore": drill_recommendation.get("weaknessScore")
+            if isinstance(drill_recommendation, dict)
+            else None,
+            "reasons": drill_recommendation.get("reasons", [])
+            if isinstance(drill_recommendation, dict)
+            else [],
             "focus": ["역할 명확화", "수치 기반 결과", "시선과 침묵 구간 점검"],
         },
     }
@@ -919,6 +1171,152 @@ def _report_metrics_from_redis_report(report: dict[str, Any], meta: dict[str, An
     }
 
 
+def _metric_value(metrics: dict[str, Any], path: str) -> float | None:
+    current: Any = metrics
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return _number(current)
+
+
+def _metric_delta(
+    *,
+    current_metrics: dict[str, Any],
+    reference_metrics: dict[str, Any] | None,
+    path: str,
+) -> dict[str, Any] | None:
+    if not reference_metrics:
+        return None
+    current_value = _metric_value(current_metrics, path)
+    reference_value = _metric_value(reference_metrics, path)
+    if current_value is None or reference_value is None:
+        return None
+    return {
+        "current": round(current_value, 4),
+        "reference": round(reference_value, 4),
+        "delta": round(current_value - reference_value, 4),
+        "deltaPercent": (
+            round((current_value - reference_value) / reference_value * 100, 2)
+            if reference_value != 0
+            else None
+        ),
+    }
+
+
+def _build_metrics_comparison(
+    *,
+    current_metrics: dict[str, Any],
+    baseline_report: DbReport | None,
+    previous_report: DbReport | None,
+) -> dict[str, Any]:
+    metric_paths = [
+        "nonverbal.averageNonverbalRiskScore",
+        "nonverbal.gazeAwayRatio",
+        "nonverbal.badPostureRatio",
+        "nonverbal.fidgetingRatio",
+        "audio.averageSpeakingRatio",
+        "audio.totalSilenceMs",
+        "audio.longSilenceCount",
+        "content.averageAnswerLengthChars",
+    ]
+
+    def compare_to(reference: DbReport | None) -> dict[str, Any]:
+        if reference is None or not isinstance(reference.metrics, dict):
+            return {"reportId": None, "metrics": {}}
+        comparisons = {}
+        for path in metric_paths:
+            delta = _metric_delta(
+                current_metrics=current_metrics,
+                reference_metrics=reference.metrics,
+                path=path,
+            )
+            if delta is not None:
+                comparisons[path] = delta
+        return {
+            "reportId": reference.id,
+            "reportType": reference.report_type,
+            "sessionId": reference.session_id,
+            "metrics": comparisons,
+        }
+
+    baseline_comparison = compare_to(baseline_report)
+    previous_comparison = compare_to(previous_report)
+    summary = []
+    gaze_delta = baseline_comparison["metrics"].get("nonverbal.gazeAwayRatio", {}).get("delta")
+    silence_delta = baseline_comparison["metrics"].get("audio.longSilenceCount", {}).get("delta")
+    posture_delta = baseline_comparison["metrics"].get("nonverbal.badPostureRatio", {}).get("delta")
+    if gaze_delta is not None:
+        summary.append(
+            {
+                "metric": "gazeAwayRatio",
+                "direction": "decreased" if gaze_delta < 0 else "increased" if gaze_delta > 0 else "unchanged",
+                "delta": gaze_delta,
+            }
+        )
+    if silence_delta is not None:
+        summary.append(
+            {
+                "metric": "longSilenceCount",
+                "direction": "decreased" if silence_delta < 0 else "increased" if silence_delta > 0 else "unchanged",
+                "delta": silence_delta,
+            }
+        )
+    if posture_delta is not None:
+        summary.append(
+            {
+                "metric": "badPostureRatio",
+                "direction": "decreased" if posture_delta < 0 else "increased" if posture_delta > 0 else "unchanged",
+                "delta": posture_delta,
+            }
+        )
+
+    return {
+        "schemaVersion": "comparison_v1",
+        "baseline": baseline_comparison,
+        "previous": previous_comparison,
+        "summary": summary,
+    }
+
+
+async def _load_comparison_references(
+    *,
+    db: Any,
+    course_id: str,
+    user_id: str,
+    current_report_type: str,
+) -> tuple[DbReport | None, DbReport | None]:
+    baseline_result = await db.execute(
+        select(DbReport)
+        .where(
+            DbReport.course_id == course_id,
+            DbReport.user_id == user_id,
+            DbReport.report_type == "baseline_report",
+            DbReport.status == "ready",
+        )
+        .order_by(DbReport.created_at.asc())
+    )
+    baseline_report = baseline_result.scalars().first()
+
+    previous_result = await db.execute(
+        select(DbReport)
+        .where(
+            DbReport.course_id == course_id,
+            DbReport.user_id == user_id,
+            DbReport.status == "ready",
+            DbReport.report_type != "final_report",
+        )
+        .order_by(DbReport.created_at.desc())
+    )
+    previous_report = previous_result.scalars().first()
+
+    if current_report_type == "baseline_report":
+        baseline_report = None
+        previous_report = None
+
+    return baseline_report, previous_report
+
+
 async def _sync_db_session_from_runtime(
     session_id: str,
     meta: dict[str, Any],
@@ -949,6 +1347,22 @@ async def _sync_db_session_from_runtime(
 
         if report is not None:
             report_id = report.get("reportId") or meta.get("reportId") or f"r_{uuid.uuid4().hex[:12]}"
+            report_type = REPORT_TYPE_BY_SESSION_TYPE.get(
+                str(meta.get("sessionType") or ""),
+                "baseline_report",
+            )
+            metrics = _report_metrics_from_redis_report(report, meta)
+            baseline_report, previous_report = await _load_comparison_references(
+                db=db,
+                course_id=meta["courseId"],
+                user_id=meta["userId"],
+                current_report_type=report_type,
+            )
+            comparison = _build_metrics_comparison(
+                current_metrics=metrics,
+                baseline_report=baseline_report,
+                previous_report=previous_report,
+            )
             existing_report = await db.execute(
                 select(DbReport).where(
                     DbReport.id == report_id,
@@ -962,13 +1376,10 @@ async def _sync_db_session_from_runtime(
                         course_id=meta["courseId"],
                         session_id=session_id,
                         user_id=meta["userId"],
-                        report_type=REPORT_TYPE_BY_SESSION_TYPE.get(
-                            str(meta.get("sessionType") or ""),
-                            "baseline_report",
-                        ),
+                        report_type=report_type,
                         summary=" ".join(report.get("overallSummary") or []) or None,
-                        metrics=_report_metrics_from_redis_report(report, meta),
-                        comparison={},
+                        metrics=metrics,
+                        comparison=comparison,
                         recommendations=report.get("nextPractice") or {},
                         status="ready",
                     )

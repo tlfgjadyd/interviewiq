@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     FRONTEND_AUTH_REDIRECT_URL: str = "http://localhost:3000/auth/callback"
     AUTH_SECRET: str = "interviewiq-dev-auth-secret"
     AUTH_TOKEN_TTL_SECONDS: int = 60 * 60 * 24 * 7
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET: str = ""
+    R2_PRESIGN_EXPIRES_SECONDS: int = 60 * 10
     OPENAI_API_KEY: str = ""
     OPENAI_STT_MODEL: str = "gpt-4o-mini-transcribe"
     OPENROUTER_API_KEY: str | None = None
