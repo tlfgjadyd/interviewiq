@@ -137,8 +137,7 @@ export type AnswerState = {
   maxAnswerSec: number;
 };
 
-export type DrillAttempt = {
-  attemptId: string;
+export type DrillSessionResult = {
   drillId: string;
   sessionId: string;
   reportId?: string;
@@ -148,7 +147,7 @@ export type DrillAttempt = {
   flow?: InterviewFlow;
   topic?: QuestionTopic;
   analysisFocus?: AnalysisFocus[];
-  attemptNo: number;
+  runNo: number;
   metrics?: AnswerMetrics;
   passed?: boolean;
   createdAt: string;

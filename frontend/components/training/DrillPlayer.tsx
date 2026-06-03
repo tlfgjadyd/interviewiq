@@ -19,7 +19,7 @@ import { BaselineFrameGuide } from "@/components/baseline/BaselineFrameGuide";
 import Camera from "@/components/Camera/Camera";
 import { useInterviewRuntime } from "@/components/runtime/InterviewRuntimeProvider";
 import { Button } from "@/components/ui/button";
-import type { DrillAttempt } from "@/lib/runtime-types";
+import type { DrillSessionResult } from "@/lib/runtime-types";
 import { drillPlan, type Drill } from "@/lib/training";
 
 const COMPLETION_STORAGE_KEY = "interviewiq-training-plan";
@@ -69,8 +69,8 @@ export const DrillPlayer = ({
     session,
     currentQuestion,
     answerState,
-    attempts,
-    currentAttemptNo,
+    drillResults,
+    currentRunNo,
     startSession,
     startAnswer,
     endAnswer,
@@ -79,15 +79,15 @@ export const DrillPlayer = ({
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
   const [checkedItems, setCheckedItems] = useState<string[]>([]);
   const [completedDrills, setCompletedDrills] = useState<number[]>([]);
-  const [lastAttempt, setLastAttempt] = useState<DrillAttempt | null>(null);
+  const [lastResult, setLastResult] = useState<DrillSessionResult | null>(null);
 
   const currentStep = step ?? drill.drillIndex - 1;
   const nextStep = currentStep + 1 < drillPlan.length ? currentStep + 1 : null;
   const nextLegacyDrill =
     drill.drillIndex < drillPlan.length ? drill.drillIndex + 1 : null;
   const progress = Math.round(((currentStep + 1) / drillPlan.length) * 100);
-  const latestAttempt = lastAttempt ?? attempts[attempts.length - 1];
-  const previousAttempt = attempts[attempts.length - 2];
+  const latestResult = lastResult ?? drillResults[drillResults.length - 1];
+  const previousResult = drillResults[drillResults.length - 2];
   const questionText = currentQuestion || drill.question;
   const remainingSec = Math.max(
     0,
@@ -119,9 +119,9 @@ export const DrillPlayer = ({
       return;
     }
 
-    const attempt = await endAnswer();
-    if (attempt) {
-      setLastAttempt(attempt);
+    const result = await endAnswer();
+    if (result) {
+      setLastResult(result);
     }
     setMode("miniCheck");
   }, [answerState.isRecording, endAnswer]);
@@ -350,10 +350,10 @@ export const DrillPlayer = ({
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
                   <CheckCircle2 className="h-4 w-4" />
-                  Attempt {latestAttempt?.attemptNo ?? currentAttemptNo - 1}
+                  Drill session {latestResult?.runNo ?? currentRunNo - 1}
                 </div>
                 <h1 className="mt-3 text-3xl font-semibold">
-                  {latestAttempt?.passed ? "이번 목표 통과" : "한 번 더 다듬기"}
+                  {latestResult?.passed ? "이번 목표 통과" : "한 번 더 다듬기"}
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
                   답변 중에는 큰 수행 화면만 보여주고, 세부 피드백은 이 단계에서
@@ -362,19 +362,19 @@ export const DrillPlayer = ({
               </div>
               <div
                 className={`rounded-lg px-4 py-3 text-sm font-semibold ${
-                  latestAttempt?.passed
+                  latestResult?.passed
                     ? "bg-emerald-50 text-emerald-700"
                     : "bg-amber-50 text-amber-700"
                 }`}
               >
-                {latestAttempt?.passed ? "PASS" : "RETRY"}
+                {latestResult?.passed ? "PASS" : "RETRY"}
               </div>
             </div>
 
             <div className="mt-7 grid gap-4 md:grid-cols-2">
               <MiniCheckCard
                 title="개선된 지표"
-                body={describeMetricChange(previousAttempt, latestAttempt)}
+                body={describeMetricChange(previousResult, latestResult)}
               />
               <MiniCheckCard
                 title="아직 부족한 지점"
@@ -382,9 +382,9 @@ export const DrillPlayer = ({
               />
               <MiniCheckCard title="다음 시도 목표" body={drill.instruction} />
               <MiniCheckCard
-                title="Attempt 비교"
-                body={`이전 ${formatMetric(previousAttempt)} -> 이번 ${formatMetric(
-                  latestAttempt
+                title="드릴 세션 비교"
+                body={`이전 ${formatMetric(previousResult)} -> 이번 ${formatMetric(
+                  latestResult
                 )}`}
               />
             </div>
@@ -396,12 +396,12 @@ export const DrillPlayer = ({
                 className="bg-slate-950 hover:bg-slate-800"
               >
                 <RotateCcw className="h-4 w-4" />
-                같은 목표 다시
+                새 드릴 세션으로 다시
               </Button>
               <Button asChild className="bg-blue-600 hover:bg-blue-700">
                 <Link href={nextHref} onClick={completeDrill}>
                   {nextStep !== null || nextLegacyDrill
-                    ? "다음 목표로"
+                    ? "다음 드릴 세션 시작"
                     : "재검증 풀세션으로"}
                   <ArrowRight className="h-4 w-4" />
                 </Link>
@@ -541,7 +541,7 @@ export const DrillPlayer = ({
               <h2 className="text-base font-semibold">진행 상태</h2>
               <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                 <MetricBox label="session" value={session?.status ?? "idle"} />
-                <MetricBox label="attempt" value={String(currentAttemptNo)} />
+                <MetricBox label="drill session" value={String(currentRunNo)} />
               </div>
               <Button
                 type="button"
@@ -582,30 +582,30 @@ const MetricBox = ({ label, value }: { label: string; value: string }) => (
 );
 
 const describeMetricChange = (
-  previousAttempt?: DrillAttempt,
-  latestAttempt?: DrillAttempt | null
+  previousResult?: DrillSessionResult,
+  latestResult?: DrillSessionResult | null
 ) => {
-  if (!latestAttempt) {
+  if (!latestResult) {
     return "이번 시도 결과를 불러오는 중입니다.";
   }
 
-  const previous = getPrimaryMetric(previousAttempt);
-  const latest = getPrimaryMetric(latestAttempt);
+  const previous = getPrimaryMetric(previousResult);
+  const latest = getPrimaryMetric(latestResult);
 
   if (previous === undefined || latest === undefined) {
-    return `${latestAttempt.attemptNo}번째 시도 결과가 저장되었습니다.`;
+    return `${latestResult.runNo}번째 드릴 세션 리포트가 저장되었습니다.`;
   }
 
   const delta = latest - previous;
   return `${previous}에서 ${latest}로 ${delta >= 0 ? "+" : ""}${delta} 변화`;
 };
 
-const formatMetric = (attempt?: DrillAttempt | null) => {
-  const value = getPrimaryMetric(attempt);
+const formatMetric = (result?: DrillSessionResult | null) => {
+  const value = getPrimaryMetric(result);
   return value === undefined ? "-" : String(value);
 };
 
-const getPrimaryMetric = (attempt?: DrillAttempt | null) =>
-  attempt?.metrics?.content.structureScore ??
-  attempt?.metrics?.content.specificityScore ??
-  attempt?.metrics?.audio.fillerCount;
+const getPrimaryMetric = (result?: DrillSessionResult | null) =>
+  result?.metrics?.content.structureScore ??
+  result?.metrics?.content.specificityScore ??
+  result?.metrics?.audio.fillerCount;

@@ -29,8 +29,8 @@ isSessionActive
 currentQuestion
 answerState
 metrics
-attempts
-currentAttemptNo
+drillResults
+currentRunNo
 startSessionPayload
 currentQuestionMeta
 startSession()
@@ -42,7 +42,8 @@ finishSession()
 `InterviewRuntimeProvider` is now the single frontend lifecycle entry point for
 full sessions and drill sessions. It creates a `StartSessionRequest` from
 `RuntimeConfig`, forwards that payload to the existing session adapter, controls
-answer recording state, and creates a `DrillAttempt` after drill `endAnswer()`.
+answer recording state, and reads the finished drill session report after drill
+`endAnswer()`.
 For full sessions, the default `questionSetId` is `full_13`.
 
 ## Current Real Parts
@@ -55,9 +56,9 @@ For full sessions, the default `questionSetId` is `full_13`.
 - Camera and MediaPipe still run through the existing `Camera` component and
   `InterviewSessionContext`.
 - The runtime provider adapts those existing pieces into one interface.
-- Drill attempts are created by the runtime provider and saved through
-  `frontend/lib/session-api.ts`, which points to the mock API when
-  `NEXT_PUBLIC_BACKEND_URL` is empty.
+- Each drill run is represented as a new `sessionType: "drill"` session.
+  The drill result is loaded from that session's report, not from a separate
+  drill-attempt resource.
 
 ## Current Mock Parts
 
@@ -66,7 +67,8 @@ For full sessions, the default `questionSetId` is `full_13`.
 - `/result` still uses rule-based mock report and drill-plan data from
   `frontend/lib/training.ts` only as fallback data.
 - Drill completion is stored in a local progress fallback using `localStorage`.
-- Drill scoring is not yet backed by real server analysis.
+- Drill scoring comes from the drill session report when a backend report is
+  available; otherwise it falls back to normalized mock report data.
 
 ## Backend Alignment
 

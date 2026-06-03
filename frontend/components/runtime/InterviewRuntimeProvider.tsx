@@ -19,7 +19,7 @@ import { getReport } from "@/lib/session-api";
 import type {
   AnswerMetrics,
   AnswerState,
-  DrillAttempt,
+  DrillSessionResult,
   DrillTarget,
   InterviewReport,
   InterviewSession,
@@ -36,12 +36,12 @@ type InterviewRuntimeContextValue = {
   currentQuestionMeta?: RuntimeQuestionMeta;
   answerState: AnswerState;
   metrics: AnswerMetrics;
-  attempts: DrillAttempt[];
-  currentAttemptNo: number;
+  drillResults: DrillSessionResult[];
+  currentRunNo: number;
   startSessionPayload: StartSessionRequest;
   startSession: () => Promise<void>;
   startAnswer: () => void;
-  endAnswer: () => Promise<DrillAttempt | null>;
+  endAnswer: () => Promise<DrillSessionResult | null>;
   finishSession: () => Promise<void>;
 };
 
@@ -58,7 +58,7 @@ const fallbackQuestionText = "자기소개를 부탁드립니다.";
 
 const analysisFocusList = (
   meta?: RuntimeQuestionMeta
-): DrillAttempt["analysisFocus"] | undefined =>
+): DrillSessionResult["analysisFocus"] | undefined =>
   Array.isArray(meta?.analysisFocus) ? meta.analysisFocus : undefined;
 
 const reportMetricsForTarget = (
@@ -107,7 +107,7 @@ const InterviewRuntimeBridge = ({
     setAnswerRecording,
   } = useInterviewSession();
   const [elapsedSec, setElapsedSec] = useState(0);
-  const [attempts, setAttempts] = useState<DrillAttempt[]>([]);
+  const [drillResults, setDrillResults] = useState<DrillSessionResult[]>([]);
 
   useEffect(() => {
     if (!isAnswerRecording) {
@@ -172,26 +172,25 @@ const InterviewRuntimeBridge = ({
     }
 
     const report = await getReport(session.sessionId);
-    const attemptNo = attempts.length + 1;
-    const attempt: DrillAttempt = {
-      attemptId: `attempt_${crypto.randomUUID().slice(0, 8)}`,
+    const runNo = drillResults.length + 1;
+    const result: DrillSessionResult = {
       drillId: config.drillId,
       sessionId: session.sessionId,
       reportId: report.reportId,
       answerTurnId: finishedAnswerTurnId,
       questionId: finishedQuestion?.questionId,
       questionOrder: finishedQuestion?.order,
-      flow: finishedQuestion?.flow as DrillAttempt["flow"],
-      topic: finishedQuestion?.topic as DrillAttempt["topic"],
+      flow: finishedQuestion?.flow as DrillSessionResult["flow"],
+      topic: finishedQuestion?.topic as DrillSessionResult["topic"],
       analysisFocus: analysisFocusList(finishedQuestion),
-      attemptNo,
+      runNo,
       metrics: reportMetricsForTarget(report, config.drillTarget),
       passed: report.totalScore >= 75,
       createdAt: new Date().toISOString(),
     };
-    setAttempts((current) => [...current, attempt]);
-    return attempt;
-  }, [attempts.length, config, finishAnswer, session]);
+    setDrillResults((current) => [...current, result]);
+    return result;
+  }, [drillResults.length, config, finishAnswer, session]);
 
   const finishSession = useCallback(async () => {
     await finishBaseSession();
@@ -266,8 +265,8 @@ const InterviewRuntimeBridge = ({
         maxAnswerSec: config.maxAnswerSec,
       },
       metrics,
-      attempts,
-      currentAttemptNo: attempts.length + 1,
+      drillResults,
+      currentRunNo: drillResults.length + 1,
       startSessionPayload,
       startSession,
       startAnswer,
@@ -275,7 +274,7 @@ const InterviewRuntimeBridge = ({
       finishSession,
     }),
     [
-      attempts,
+      drillResults,
       config,
       currentQuestion,
       currentQuestionMeta,

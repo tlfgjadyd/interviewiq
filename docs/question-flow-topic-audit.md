@@ -207,7 +207,7 @@ topic
 analysisFocus
 ```
 
-`DrillAttempt` is also extended with:
+`DrillSessionResult` carries report-backed drill run metadata:
 
 ```text
 questionId
@@ -218,7 +218,9 @@ analysisFocus
 ```
 
 For drill sessions, `InterviewRuntimeProvider.endAnswer()` copies the current
-question metadata into the attempt when available. Full-session answer-turn
+question metadata into the local drill result when available. The server-side
+record of a drill run is the independent `sessionType="drill"` session and its
+`drill_report`, not a separate drill-attempt resource. Full-session answer-turn
 persistence is still not implemented in the frontend runtime or backend DB.
 
 ## 8. Report/Drill Source Metadata
@@ -280,7 +282,8 @@ It does not yet return `InterviewQuestion` metadata.
 Recommended next edit order:
 
 1. `frontend/context/InterviewSessionContext.tsx`
-   - Carry answer-turn metadata for full sessions, not only drill attempts.
+   - Carry answer-turn metadata for full sessions and report-backed drill
+     session results.
 
 2. `frontend/components/runtime/InterviewRuntimeProvider.tsx`
    - Add a stable current `AnswerTurn` object if result/report generation needs
