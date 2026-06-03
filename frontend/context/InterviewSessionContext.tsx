@@ -9,8 +9,18 @@ import React, {
   useState,
 } from "react";
 import type { InterviewBehaviorAnalysis } from "@/lib/analytics";
+import type {
+  DrillTarget,
+  InterviewQuestion,
+  QuestionSetId,
+  RuntimeQuestionMeta,
+  SessionType,
+} from "@/lib/runtime-types";
 
 export type SessionCreatePayload = {
+  sessionType?: SessionType;
+  courseId?: string;
+  questionSetId?: QuestionSetId;
   company: string;
   role: string;
   interviewType: string;
@@ -18,13 +28,20 @@ export type SessionCreatePayload = {
   cluster?: string | null;
   industry?: string | null;
   totalQuestions: number;
+  baselineId?: string;
+  sourceSessionId?: string;
+  drillId?: string;
+  drillTarget?: DrillTarget;
+  maxAnswerSec?: number;
 };
 
 export type InterviewSessionState = {
   sessionId: string;
+  sessionType?: SessionType;
   answerTurnId: string;
   chunkMs: number;
   currentQuestion: string;
+  currentQuestionMeta?: RuntimeQuestionMeta;
   questionIndex: number;
   totalQuestions: number;
   phase: string;
@@ -34,6 +51,12 @@ export type InterviewSessionState = {
   currentChunkIndex: number;
   status?: "active" | "finished";
   reportId?: string | null;
+  courseId?: string;
+  questionSetId?: QuestionSetId;
+  baselineId?: string;
+  sourceSessionId?: string;
+  drillId?: string;
+  drillTarget?: DrillTarget;
 };
 
 export type AnswerFinishMetadata = {
@@ -44,8 +67,19 @@ export type AnswerFinishMetadata = {
 
 type SessionCreateResponse = {
   sessionId: string;
+  sessionType?: SessionType;
+  courseId?: string;
+  questionSetId?: QuestionSetId;
+  baselineId?: string;
+  sourceSessionId?: string;
+  drillId?: string;
+  drillTarget?: DrillTarget;
+  maxAnswerSec?: number;
   answerTurnId: string;
   firstQuestion: string;
+  currentQuestionMeta?: RuntimeQuestionMeta;
+  currentQuestion?: InterviewQuestion;
+  firstQuestionMeta?: InterviewQuestion;
   firstQuestionSource?: string | null;
   questionIndex: number;
   totalQuestions: number;
@@ -59,6 +93,8 @@ type AnswerFinishResponse = {
   nextQuestionPending: boolean;
   nextAnswerTurnId: string | null;
   nextQuestion: string | null;
+  currentQuestion?: InterviewQuestion | null;
+  nextQuestionMeta?: RuntimeQuestionMeta | null;
   nextQuestionSource?: string | null;
   questionIndex: number;
   totalQuestions: number;
@@ -165,9 +201,12 @@ export const InterviewSessionProvider = ({
 
         setSession({
           sessionId: data.sessionId,
+          sessionType: data.sessionType ?? requestPayload.sessionType ?? "full",
           answerTurnId: data.answerTurnId,
           chunkMs: requestPayload.chunkMs,
           currentQuestion: data.firstQuestion,
+          currentQuestionMeta:
+            data.currentQuestionMeta ?? data.currentQuestion ?? data.firstQuestionMeta,
           questionIndex: data.questionIndex,
           totalQuestions: data.totalQuestions,
           phase: data.phase,
@@ -177,6 +216,12 @@ export const InterviewSessionProvider = ({
           currentChunkIndex: 0,
           status: "active",
           reportId: null,
+          courseId: data.courseId ?? requestPayload.courseId,
+          questionSetId: data.questionSetId ?? requestPayload.questionSetId,
+          baselineId: data.baselineId ?? requestPayload.baselineId,
+          sourceSessionId: data.sourceSessionId ?? requestPayload.sourceSessionId,
+          drillId: data.drillId ?? requestPayload.drillId,
+          drillTarget: data.drillTarget ?? requestPayload.drillTarget,
         });
         setLatestVision(null);
         setIsAnswerRecording(false);
@@ -249,6 +294,8 @@ export const InterviewSessionProvider = ({
                 ...current,
                 answerTurnId: data.nextAnswerTurnId,
                 currentQuestion: data.nextQuestion,
+                currentQuestionMeta:
+                  data.currentQuestion ?? data.nextQuestionMeta ?? current.currentQuestionMeta,
                 questionIndex: data.questionIndex,
                 totalQuestions: data.totalQuestions,
                 phase: data.phase,

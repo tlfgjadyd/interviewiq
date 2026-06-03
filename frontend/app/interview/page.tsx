@@ -1,31 +1,36 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef } from "react";
-import { SettingsProvider } from "@/lib/settings-provider";
 import Camera from "@/components/Camera/Camera";
-import { MetricsProvider } from "@/context/MetricsContext";
 import {
-  InterviewSessionProvider,
-  useInterviewSession,
-} from "@/context/InterviewSessionContext";
+  InterviewRuntimeProvider,
+  useInterviewRuntime,
+} from "@/components/runtime/InterviewRuntimeProvider";
 import { Button } from "@/components/ui/button";
+import { getDefaultQuestionSet } from "@/lib/question-loader";
 import { Maximize2, Square } from "lucide-react";
 
-const fallbackQuestion = "자기소개를 부탁드립니다.";
-const totalQuestions = 5;
+const defaultQuestionSet = getDefaultQuestionSet();
+const firstQuestion = defaultQuestionSet.questions[0];
+const fallbackQuestion = firstQuestion.text;
+const totalQuestions = defaultQuestionSet.questions.length;
 
 function InterviewStage() {
+  const router = useRouter();
   const didAutoStartRef = useRef(false);
+  const didNavigateToResultRef = useRef(false);
   const {
     session,
-    isFinishingAnswer,
+    isSessionActive,
+    currentQuestion,
+    answerState,
     startSession,
-    finishAnswer,
-  } = useInterviewSession();
+    startAnswer,
+    endAnswer,
+  } = useInterviewRuntime();
 
-  const questionTitle = session?.currentQuestion ?? fallbackQuestion;
-  const isSessionActive = session?.status === "active";
   const waveformBars = useMemo(
     () =>
       Array.from({ length: 44 }).map(
@@ -46,15 +51,33 @@ function InterviewStage() {
     }
 
     didAutoStartRef.current = true;
-    startSession({ totalQuestions });
+    startSession();
   }, [session, startSession]);
 
-  const endAnswer = async () => {
-    if (!session || isFinishingAnswer) {
+  useEffect(() => {
+    if (
+      didNavigateToResultRef.current ||
+      !session ||
+      session.status !== "finished"
+    ) {
       return;
     }
 
-    await finishAnswer("button");
+    didNavigateToResultRef.current = true;
+    router.replace(`/result?sessionId=${encodeURIComponent(session.sessionId)}`);
+  }, [router, session]);
+
+  const handleAnswerButton = async () => {
+    if (!session) {
+      return;
+    }
+
+    if (answerState.isRecording) {
+      await endAnswer();
+      return;
+    }
+
+    startAnswer();
   };
 
   return (
@@ -110,16 +133,16 @@ function InterviewStage() {
                 질문
               </p>
               <h1 className="mt-5 break-keep text-[clamp(42px,4.8vw,88px)] font-bold leading-[1.08] tracking-normal drop-shadow-md">
-                {questionTitle}
+                {currentQuestion}
               </h1>
             </div>
 
             <div className="absolute bottom-[5.8%] left-1/2 z-20 flex w-[clamp(520px,50%,700px)] max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-5 rounded-2xl border border-white/18 bg-slate-950/34 px-5 py-3 text-white shadow-2xl shadow-black/20 backdrop-blur-md">
               <div className="min-w-[145px]">
                 <p className="text-base font-bold">
-                  {isSessionActive ? "답변 중" : "답변 대기"}
+                  {answerState.isRecording ? "답변 중" : "답변 대기"}
                   <span className="ml-2 text-sm font-medium text-white/65">
-                    최대 90초
+                    최대 {answerState.maxAnswerSec}초
                   </span>
                 </p>
               </div>
@@ -139,12 +162,12 @@ function InterviewStage() {
 
               <Button
                 type="button"
-                onClick={endAnswer}
-                disabled={!session || isFinishingAnswer}
+                onClick={handleAnswerButton}
+                disabled={!session}
                 className="h-11 min-w-[124px] rounded-xl bg-blue-600 px-5 text-base font-bold text-white hover:bg-blue-700 disabled:bg-blue-500/70"
               >
                 <Square className="h-3.5 w-3.5 fill-white text-white" />
-                {isFinishingAnswer ? "종료 중" : "답변 종료"}
+                {answerState.isRecording ? "답변 종료" : "답변 시작"}
               </Button>
             </div>
 
@@ -158,12 +181,17 @@ function InterviewStage() {
 
 export default function InterviewPage() {
   return (
-    <SettingsProvider>
-      <MetricsProvider>
-        <InterviewSessionProvider>
-          <InterviewStage />
-        </InterviewSessionProvider>
-      </MetricsProvider>
-    </SettingsProvider>
+    <InterviewRuntimeProvider
+      config={{
+        sessionType: "full",
+        questionSetId: "full_13",
+        maxAnswerSec: 90,
+        totalQuestions,
+        initialQuestion: fallbackQuestion,
+        initialQuestionMeta: firstQuestion,
+      }}
+    >
+      <InterviewStage />
+    </InterviewRuntimeProvider>
   );
 }

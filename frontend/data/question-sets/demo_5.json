@@ -1,0 +1,62 @@
+{
+  "questionSetId": "demo_5",
+  "name": "데모 면접 5문항",
+  "description": "개발, 시연, 빠른 테스트용 축약 질문 세트",
+  "questions": [
+    {
+      "questionId": "d01_intro_self",
+      "order": 1,
+      "flow": "ice_breaking",
+      "topic": "self_introduction",
+      "title": "자기소개",
+      "text": "간단히 자기소개 부탁드립니다.",
+      "intent": "초기 답변 안정성을 빠르게 확인한다.",
+      "expectedAnswerSec": 60,
+      "analysisFocus": ["speech_pace", "filler_words", "gaze_stability"]
+    },
+    {
+      "questionId": "d02_values",
+      "order": 2,
+      "flow": "basic_personality",
+      "topic": "values",
+      "title": "가치관",
+      "text": "일할 때 가장 중요하게 생각하는 가치 하나를 경험과 함께 설명해 주세요.",
+      "intent": "기본 인성 흐름의 대표 응답을 확인한다.",
+      "expectedAnswerSec": 75,
+      "analysisFocus": ["answer_structure", "specificity"]
+    },
+    {
+      "questionId": "d03_project",
+      "order": 3,
+      "flow": "job_competency",
+      "topic": "project_experience",
+      "title": "대표 프로젝트",
+      "text": "가장 자신 있는 프로젝트에서 본인의 역할과 결과를 설명해 주세요.",
+      "intent": "직무 역량 대표 질문을 빠르게 확인한다.",
+      "expectedAnswerSec": 90,
+      "analysisFocus": ["answer_structure", "specificity", "relevance"]
+    },
+    {
+      "questionId": "d04_deep_dive",
+      "order": 4,
+      "flow": "deep_dive",
+      "topic": "technical_knowledge",
+      "title": "선택 근거",
+      "text": "그 프로젝트에서 한 기술적 선택의 근거와 포기한 대안을 설명해 주세요.",
+      "intent": "꼬리질문 흐름의 대표 압박 응답을 확인한다.",
+      "expectedAnswerSec": 90,
+      "analysisFocus": ["specificity", "pause", "filler_words"]
+    },
+    {
+      "questionId": "d05_closing",
+      "order": 5,
+      "flow": "closing",
+      "topic": "reverse_question",
+      "title": "마무리",
+      "text": "마지막으로 궁금한 점이나 덧붙이고 싶은 말이 있나요?",
+      "intent": "마무리 태도와 역질문 준비도를 빠르게 확인한다.",
+      "expectedAnswerSec": 60,
+      "analysisFocus": ["speech_pace", "gaze_stability", "relevance"]
+    }
+  ]
+}

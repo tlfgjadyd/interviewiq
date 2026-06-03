@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
+import { BaselineFrameGuide } from "@/components/baseline/BaselineFrameGuide";
 import { Button } from "@/components/ui/button";
 import { useMediapipe } from "@/hooks/useMediaPipe";
 import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
@@ -262,7 +263,8 @@ export default function BaselinePage() {
                 가이드라인에 맞춰 앉아주세요
               </div>
 
-              <div className="pointer-events-none absolute inset-0">
+              <BaselineFrameGuide />
+              <div className="hidden">
                 {[
                   ["눈높이", "top-[26%]"],
                   ["어깨선", "top-[44%]"],
