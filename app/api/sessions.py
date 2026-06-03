@@ -2,20 +2,28 @@ import json
 import re
 import tempfile
 import uuid
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.deps import get_current_user
 from app.core.redis import REDIS_TTL_SECONDS, get_redis
+from app.core.r2 import create_presigned_get_url
 from app.db.database import AsyncSessionLocal
+from app.db.database import get_db
+from app.db.models import Asset
 from app.db.models import Report as DbReport
 from app.db.models import Session as DbSession
+from app.db.models import User
 from app.llm import QuestionGenerator
 from app.llm.question_generator import GeneratedQuestion
-from app.llm.transcriber import AudioTranscriber
+from app.llm.transcriber import AudioTranscriber, TranscriptionResult
 from app.rag import RagRetriever
 from app.rag.schema import RagDocument, RagMetadata
 from app.schemas.chunk import (
@@ -28,6 +36,8 @@ from app.schemas.chunk import (
     VisionChunkCreate,
 )
 from app.schemas.session import (
+    AnswerAudioAssetRequest,
+    AnswerAudioAssetResponse,
     AnswerAudioMetadata,
     AnswerAudioResponse,
     AnswerFinishRequest,
@@ -76,20 +86,87 @@ SKILL_KEYWORDS = [
 ]
 INTERVIEW_PHASES = [
     {
-        "phase": "opening",
-        "goal": "자기소개, 지원동기, 대표 경험을 넓게 확인한다.",
+        "phase": "ice_breaking",
+        "goal": "자기소개, 지원동기, 가치관을 통해 답변의 기본 톤과 방향을 확인한다.",
     },
     {
-        "phase": "project_competency",
-        "goal": "프로젝트 경험에서 본인의 역할, 기술 선택 이유, 문제 해결 과정, 결과를 확인한다.",
+        "phase": "basic_personality",
+        "goal": "기본 인성, 상황 대응, 팀워크 경험을 확인한다.",
     },
     {
-        "phase": "collaboration_problem_solving",
-        "goal": "협업, 갈등 해결, 커뮤니케이션, 문제 해결 방식을 확인한다.",
+        "phase": "job_competency",
+        "goal": "직무 지식, 산업 이해도, 프로젝트 경험을 통해 직무 역량을 확인한다.",
     },
     {
-        "phase": "fit_closing",
-        "goal": "회사와 직무 적합도, 성장 방향, 마지막으로 강조하고 싶은 내용을 확인한다.",
+        "phase": "deep_dive",
+        "goal": "상황형 또는 압박 질문으로 답변의 구체성, 일관성, 문제 해결 깊이를 확인한다.",
+    },
+    {
+        "phase": "closing",
+        "goal": "마무리 답변과 역질문을 통해 직무 적합도와 준비도를 확인한다.",
+    },
+]
+INTERVIEW_PHASE_GOALS = {phase["phase"]: phase["goal"] for phase in INTERVIEW_PHASES}
+QUESTION_BLUEPRINTS = [
+    {
+        "phase": "ice_breaking",
+        "topic": "motivation",
+        "analysisFocus": "지원 동기와 회사/직무 관심도의 구체성을 확인한다.",
+    },
+    {
+        "phase": "ice_breaking",
+        "topic": "values",
+        "analysisFocus": "일하는 방식과 가치관이 직무와 연결되는지 확인한다.",
+    },
+    {
+        "phase": "ice_breaking",
+        "topic": "self_introduction",
+        "analysisFocus": "자기소개가 핵심 경험과 강점을 명확하게 전달하는지 확인한다.",
+    },
+    {
+        "phase": "basic_personality",
+        "topic": "values",
+        "analysisFocus": "기본 인성과 의사결정 기준이 일관적인지 확인한다.",
+    },
+    {
+        "phase": "basic_personality",
+        "topic": "situational",
+        "analysisFocus": "상황 판단과 문제 대응 과정을 구조적으로 설명하는지 확인한다.",
+    },
+    {
+        "phase": "basic_personality",
+        "topic": "teamwork",
+        "analysisFocus": "협업, 갈등 조율, 커뮤니케이션 경험을 구체적으로 설명하는지 확인한다.",
+    },
+    {
+        "phase": "job_competency",
+        "topic": "technical_knowledge",
+        "analysisFocus": "직무 기술 지식과 선택 근거를 정확하게 설명하는지 확인한다.",
+    },
+    {
+        "phase": "job_competency",
+        "topic": "industry_knowledge",
+        "analysisFocus": "지원 산업과 회사 맥락을 이해하고 답변에 반영하는지 확인한다.",
+    },
+    {
+        "phase": "job_competency",
+        "topic": "project_experience",
+        "analysisFocus": "프로젝트에서 본인의 역할, 문제 해결 과정, 결과를 수치와 근거로 설명하는지 확인한다.",
+    },
+    {
+        "phase": "deep_dive",
+        "topic": "situational",
+        "analysisFocus": "꼬리질문이나 압박 상황에서도 답변의 논리와 일관성을 유지하는지 확인한다.",
+    },
+    {
+        "phase": "deep_dive",
+        "topic": "situational",
+        "analysisFocus": "복잡한 상황에서 trade-off와 대안을 설명하는 깊이를 확인한다.",
+    },
+    {
+        "phase": "closing",
+        "topic": "general",
+        "analysisFocus": "마무리 답변과 역질문에서 준비도, 관심도, 성장 방향을 확인한다.",
     },
 ]
 REPORT_TYPE_BY_SESSION_TYPE = {
@@ -142,21 +219,40 @@ def _session_rag_docs_key(session_id: str) -> str:
 def _phase_for_question(question_index: int, total_questions: int) -> dict[str, Any]:
     safe_total = max(total_questions, 1)
     safe_index = min(max(question_index, 1), safe_total)
-    phase_count = len(INTERVIEW_PHASES)
-    phase_index = min((safe_index - 1) * phase_count // safe_total, phase_count - 1)
-    phase = INTERVIEW_PHASES[phase_index]
-    phase_start = (phase_index * safe_total) // phase_count + 1
-    next_phase_start = ((phase_index + 1) * safe_total) // phase_count + 1
-    phase_end = min(max(next_phase_start - 1, phase_start), safe_total)
+    blueprint_index = min(
+        (safe_index - 1) * len(QUESTION_BLUEPRINTS) // safe_total,
+        len(QUESTION_BLUEPRINTS) - 1,
+    )
+    blueprint = QUESTION_BLUEPRINTS[blueprint_index]
+    phase_name = blueprint["phase"]
+    mapped_phases = [
+        QUESTION_BLUEPRINTS[
+            min(
+                (index - 1) * len(QUESTION_BLUEPRINTS) // safe_total,
+                len(QUESTION_BLUEPRINTS) - 1,
+            )
+        ]["phase"]
+        for index in range(1, safe_total + 1)
+    ]
+    phase_question_indices = [
+        index for index, mapped_phase in enumerate(mapped_phases, start=1)
+        if mapped_phase == phase_name
+    ]
+    phase_question_index = phase_question_indices.index(safe_index) + 1
     return {
         "questionIndex": safe_index,
         "totalQuestions": safe_total,
-        "phase": phase["phase"],
-        "phaseGoal": phase["goal"],
-        "phaseQuestionIndex": safe_index - phase_start + 1,
-        "phaseQuestionTotal": phase_end - phase_start + 1,
+        "phase": phase_name,
+        "phaseGoal": INTERVIEW_PHASE_GOALS[phase_name],
+        "phaseQuestionIndex": phase_question_index,
+        "phaseQuestionTotal": len(phase_question_indices),
         "remainingQuestions": max(safe_total - safe_index, 0),
         "isFinalQuestion": safe_index >= safe_total,
+        "questionMeta": {
+            "questionId": f"q{safe_index:02d}_{phase_name}_{blueprint['topic']}",
+            "topic": blueprint["topic"],
+            "analysisFocus": blueprint["analysisFocus"],
+        },
     }
 
 
@@ -278,6 +374,129 @@ def _count_chunks(chunks: list[dict[str, Any]]) -> AnswerChunkCounts:
         audioFeatureReady=ready("audioFeatureReady"),
         analysisReady=ready("analysisReady"),
     )
+
+
+def _safe_storage_id(value: str) -> str:
+    return "".join(char for char in value if char.isalnum() or char in {"_", "-"})
+
+
+def _audio_suffix(*, file_name: str | None = None, mime_type: str | None = None) -> str:
+    original_suffix = Path(file_name or "").suffix
+    if original_suffix.startswith(".") and len(original_suffix) <= 12:
+        return original_suffix
+
+    mime_extensions = {
+        "audio/webm": ".webm",
+        "video/webm": ".webm",
+        "audio/mpeg": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/wav": ".wav",
+    }
+    return mime_extensions.get((mime_type or "").lower(), ".webm")
+
+
+def _download_url_to_path(url: str, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with urlopen(url, timeout=60) as response, path.open("wb") as output:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            output.write(chunk)
+
+
+def _transcription_to_dict(transcription: TranscriptionResult) -> dict[str, Any]:
+    return {
+        "text": transcription.text,
+        "source": transcription.source,
+        "model": transcription.model,
+        "error": transcription.error,
+    }
+
+
+def _transcription_from_dict(value: dict[str, Any]) -> TranscriptionResult:
+    return TranscriptionResult(
+        text=str(value.get("text") or ""),
+        source=str(value.get("source") or "unknown"),
+        model=value.get("model"),
+        error=value.get("error"),
+    )
+
+
+async def _store_answer_audio(
+    *,
+    session_id: str,
+    answer_turn_id: str,
+    audio_path: Path,
+    mime_type: str | None,
+    duration_ms: int | None,
+    language: str | None,
+    browser_transcript: str | None,
+    browser_latest_text: str | None,
+    started_at: int | None = None,
+    ended_at: int | None = None,
+    asset: Asset | None = None,
+) -> dict[str, Any]:
+    stored_audio = {
+        "sessionId": session_id,
+        "answerTurnId": answer_turn_id,
+        "audioPath": str(audio_path),
+        "audioMimeType": mime_type,
+        "audioMetadata": {
+            "startedAt": started_at,
+            "endedAt": ended_at,
+            "durationMs": duration_ms,
+            "language": language,
+            "browserTranscript": browser_transcript,
+            "browserLatestText": browser_latest_text,
+        },
+        "status": {
+            "audioReceived": True,
+            "speechReady": False,
+            "audioFeatureReady": False,
+        },
+    }
+    if asset is not None:
+        stored_audio["asset"] = {
+            "assetId": asset.id,
+            "objectKey": asset.object_key,
+            "bucket": asset.bucket,
+            "assetType": asset.asset_type,
+        }
+    await _write_json(_answer_audio_key(session_id, answer_turn_id), stored_audio)
+    return stored_audio
+
+
+async def _transcribe_answer_audio_record(
+    *,
+    session_id: str,
+    answer_turn_id: str,
+    language: str | None = None,
+) -> tuple[dict[str, Any], TranscriptionResult]:
+    answer_audio = await _read_json(_answer_audio_key(session_id, answer_turn_id))
+    if answer_audio is None:
+        raise HTTPException(status_code=404, detail="Answer audio not found")
+
+    existing_transcription = answer_audio.get("transcription")
+    if isinstance(existing_transcription, dict):
+        return answer_audio, _transcription_from_dict(existing_transcription)
+
+    audio_metadata = (
+        answer_audio.get("audioMetadata", {})
+        if isinstance(answer_audio.get("audioMetadata"), dict)
+        else {}
+    )
+    transcription = await audio_transcriber.transcribe_answer_audio(
+        audio_path=answer_audio.get("audioPath"),
+        language=language or audio_metadata.get("language"),
+    )
+    answer_audio["transcription"] = _transcription_to_dict(transcription)
+    answer_audio["status"] = {
+        **answer_audio.get("status", {}),
+        "speechReady": bool(transcription.text.strip()),
+    }
+    await _write_json(_answer_audio_key(session_id, answer_turn_id), answer_audio)
+    return answer_audio, transcription
 
 
 def _short_sentences(text: str, limit: int = 3) -> list[str]:
@@ -1068,13 +1287,21 @@ def _build_session_report(
     question_reports = []
     for analysis in answered_turns:
         progress = analysis.get("interviewProgress", {})
+        question_meta = (
+            progress.get("questionMeta")
+            if isinstance(progress.get("questionMeta"), dict)
+            else {}
+        )
         answer_turn_id = str(analysis.get("answerTurnId") or "")
         question_reports.append(
             {
                 "answerTurnId": answer_turn_id,
+                "questionId": question_meta.get("questionId"),
                 "questionIndex": progress.get("questionIndex"),
                 "phase": progress.get("phase"),
                 "phaseGoal": progress.get("phaseGoal"),
+                "topic": question_meta.get("topic"),
+                "analysisFocus": question_meta.get("analysisFocus"),
                 "answerText": analysis.get("answerText", ""),
                 "answerTextSource": analysis.get("answerTextSource"),
                 "transcription": analysis.get("transcription"),
@@ -1412,6 +1639,7 @@ async def start_runtime_session(
         "currentAnswerTurnId": answer_turn_id,
         "currentQuestion": first_question.text,
         "currentQuestionSource": first_question.source,
+        "currentQuestionMeta": progress["questionMeta"],
         **progress,
     }
     if extra_meta:
@@ -1429,6 +1657,7 @@ async def start_runtime_session(
         totalQuestions=progress["totalQuestions"],
         phase=progress["phase"],
         phaseGoal=progress["phaseGoal"],
+        currentQuestionMeta=progress["questionMeta"],
     )
 
 
@@ -1620,39 +1849,26 @@ async def receive_answer_audio(
             detail="Path answer_turn_id and metadata answerTurnId differ",
         )
 
-    safe_answer_turn_id = "".join(
-        char for char in answer_turn_id if char.isalnum() or char in {"_", "-"}
-    )
-    original_suffix = Path(audio.filename or "").suffix
-    suffix = original_suffix if original_suffix else ".webm"
-    if not suffix.startswith(".") or len(suffix) > 12:
-        suffix = ".webm"
+    safe_answer_turn_id = _safe_storage_id(answer_turn_id)
+    suffix = _audio_suffix(file_name=audio.filename, mime_type=parsed_metadata.mimeType)
 
     audio_dir = Path(tempfile.gettempdir()) / "interviewiq_audio" / "answers"
     audio_dir.mkdir(parents=True, exist_ok=True)
     audio_path = audio_dir / f"{session_id}_{safe_answer_turn_id}{suffix}"
     audio_path.write_bytes(await audio.read())
 
-    stored_audio = {
-        "sessionId": session_id,
-        "answerTurnId": answer_turn_id,
-        "audioPath": str(audio_path),
-        "audioMimeType": parsed_metadata.mimeType,
-        "audioMetadata": {
-            "startedAt": parsed_metadata.startedAt,
-            "endedAt": parsed_metadata.endedAt,
-            "durationMs": parsed_metadata.durationMs,
-            "language": parsed_metadata.language,
-            "browserTranscript": parsed_metadata.browserTranscript,
-            "browserLatestText": parsed_metadata.browserLatestText,
-        },
-        "status": {
-            "audioReceived": True,
-            "speechReady": False,
-            "audioFeatureReady": False,
-        },
-    }
-    await _write_json(_answer_audio_key(session_id, answer_turn_id), stored_audio)
+    await _store_answer_audio(
+        session_id=session_id,
+        answer_turn_id=answer_turn_id,
+        audio_path=audio_path,
+        mime_type=parsed_metadata.mimeType,
+        duration_ms=parsed_metadata.durationMs,
+        language=parsed_metadata.language,
+        browser_transcript=parsed_metadata.browserTranscript,
+        browser_latest_text=parsed_metadata.browserLatestText,
+        started_at=parsed_metadata.startedAt,
+        ended_at=parsed_metadata.endedAt,
+    )
 
     return AnswerAudioResponse(
         sessionId=session_id,
@@ -1661,6 +1877,90 @@ async def receive_answer_audio(
         audioPath=str(audio_path),
         mimeType=parsed_metadata.mimeType,
         durationMs=parsed_metadata.durationMs,
+    )
+
+
+@router.post(
+    "/{session_id}/answers/{answer_turn_id}/audio/analyze-asset",
+    response_model=AnswerAudioAssetResponse,
+)
+async def analyze_answer_audio_asset(
+    session_id: str,
+    answer_turn_id: str,
+    payload: AnswerAudioAssetRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_session(session_id)
+    session_result = await db.execute(
+        select(DbSession).where(
+            DbSession.id == session_id,
+            DbSession.user_id == current_user.id,
+        )
+    )
+    db_session = session_result.scalar_one_or_none()
+    if db_session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    asset_result = await db.execute(
+        select(Asset).where(
+            Asset.id == payload.assetId,
+            Asset.session_id == session_id,
+            Asset.user_id == current_user.id,
+        )
+    )
+    asset = asset_result.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if asset.asset_type != "answer_audio":
+        raise HTTPException(status_code=400, detail="Asset is not answer_audio")
+    if asset.answer_turn_id != answer_turn_id:
+        raise HTTPException(status_code=400, detail="Asset answerTurnId does not match path")
+    if asset.status == "pending":
+        raise HTTPException(status_code=409, detail="Asset upload is not completed")
+
+    suffix = _audio_suffix(file_name=asset.object_key, mime_type=asset.mime_type)
+    safe_answer_turn_id = _safe_storage_id(answer_turn_id)
+    audio_dir = Path(tempfile.gettempdir()) / "interviewiq_audio" / "answers"
+    audio_path = audio_dir / f"{session_id}_{safe_answer_turn_id}_{asset.id}{suffix}"
+
+    try:
+        read_url = create_presigned_get_url(object_key=asset.object_key)
+        await asyncio.to_thread(_download_url_to_path, read_url, audio_path)
+    except Exception as exc:
+        asset.status = "failed"
+        await db.commit()
+        raise HTTPException(status_code=502, detail=f"Failed to download R2 asset: {exc}") from exc
+
+    await _store_answer_audio(
+        session_id=session_id,
+        answer_turn_id=answer_turn_id,
+        audio_path=audio_path,
+        mime_type=asset.mime_type,
+        duration_ms=asset.duration_ms,
+        language=payload.language,
+        browser_transcript=payload.browserTranscript,
+        browser_latest_text=payload.browserLatestText,
+        asset=asset,
+    )
+    answer_audio, transcription = await _transcribe_answer_audio_record(
+        session_id=session_id,
+        answer_turn_id=answer_turn_id,
+        language=payload.language,
+    )
+
+    asset.status = "processed"
+    await db.commit()
+
+    return AnswerAudioAssetResponse(
+        sessionId=session_id,
+        answerTurnId=answer_turn_id,
+        assetId=asset.id,
+        status="processed",
+        audioPath=str(audio_path),
+        mimeType=asset.mime_type,
+        durationMs=asset.duration_ms,
+        transcription=answer_audio["transcription"],
     )
 
 
@@ -1703,26 +2003,11 @@ async def finish_answer(
     answer_audio = await _read_json(_answer_audio_key(session_id, answer_turn_id))
     transcription = None
     if answer_audio:
-        audio_metadata = (
-            answer_audio.get("audioMetadata", {})
-            if isinstance(answer_audio.get("audioMetadata"), dict)
-            else {}
+        answer_audio, transcription = await _transcribe_answer_audio_record(
+            session_id=session_id,
+            answer_turn_id=answer_turn_id,
+            language=payload.language,
         )
-        transcription = await audio_transcriber.transcribe_answer_audio(
-            audio_path=answer_audio.get("audioPath"),
-            language=payload.language or audio_metadata.get("language"),
-        )
-        answer_audio["transcription"] = {
-            "text": transcription.text,
-            "source": transcription.source,
-            "model": transcription.model,
-            "error": transcription.error,
-        }
-        answer_audio["status"] = {
-            **answer_audio.get("status", {}),
-            "speechReady": bool(transcription.text.strip()),
-        }
-        await _write_json(_answer_audio_key(session_id, answer_turn_id), answer_audio)
 
     speech_chunk_text = " ".join(
         chunk.get("speech", {}).get("text", "")
@@ -1757,6 +2042,7 @@ async def finish_answer(
         "phaseQuestionTotal": meta.get("phaseQuestionTotal"),
         "remainingQuestions": meta.get("remainingQuestions"),
         "isFinalQuestion": meta.get("isFinalQuestion", False),
+        "questionMeta": meta.get("currentQuestionMeta") or meta.get("questionMeta"),
     }
     is_final_answer = bool(current_progress.get("isFinalQuestion")) or int(
         current_progress.get("questionIndex", 1)
@@ -1847,8 +2133,9 @@ async def finish_answer(
             nextQuestionSource=None,
             questionIndex=int(current_progress.get("questionIndex", 1)),
             totalQuestions=int(current_progress.get("totalQuestions", 12)),
-            phase=str(current_progress.get("phase") or "fit_closing"),
+            phase=str(current_progress.get("phase") or "closing"),
             phaseGoal=str(current_progress.get("phaseGoal") or INTERVIEW_PHASES[-1]["goal"]),
+            nextQuestionMeta=None,
             sessionFinished=True,
             reportId=report_id,
         )
@@ -1856,6 +2143,9 @@ async def finish_answer(
     meta["currentAnswerTurnId"] = next_answer_turn_id
     meta["currentQuestion"] = next_question.text if next_question else None
     meta["currentQuestionSource"] = next_question.source if next_question else None
+    meta["currentQuestionMeta"] = (
+        next_progress.get("questionMeta") if next_progress else None
+    )
     meta.update(next_progress or {})
     await _write_json(_session_meta_key(session_id), meta)
     await client.rpush(_turns_key(session_id), next_answer_turn_id)
@@ -1871,8 +2161,9 @@ async def finish_answer(
         nextQuestionSource=next_question.source if next_question else None,
         questionIndex=next_progress["questionIndex"] if next_progress else 1,
         totalQuestions=next_progress["totalQuestions"] if next_progress else 12,
-        phase=next_progress["phase"] if next_progress else "opening",
+        phase=next_progress["phase"] if next_progress else "ice_breaking",
         phaseGoal=next_progress["phaseGoal"] if next_progress else INTERVIEW_PHASES[0]["goal"],
+        nextQuestionMeta=next_progress["questionMeta"] if next_progress else None,
         sessionFinished=False,
         reportId=None,
     )
@@ -1909,7 +2200,7 @@ async def get_next_question(session_id: str):
         questionSource=meta.get("currentQuestionSource"),
         questionIndex=meta.get("questionIndex", 1),
         totalQuestions=meta.get("totalQuestions", 12),
-        phase=meta.get("phase", "opening"),
+        phase=meta.get("phase", "ice_breaking"),
         phaseGoal=meta.get("phaseGoal", INTERVIEW_PHASES[0]["goal"]),
     )
 

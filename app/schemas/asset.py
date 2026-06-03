@@ -25,6 +25,14 @@ class AssetUploadUrlResponse(BaseModel):
     method: Literal["PUT"] = "PUT"
 
 
+class AssetReadUrlResponse(BaseModel):
+    assetId: str
+    objectKey: str
+    readUrl: str
+    expiresIn: int
+    method: Literal["GET"] = "GET"
+
+
 class AssetCompleteRequest(BaseModel):
     assetId: str
     objectKey: str

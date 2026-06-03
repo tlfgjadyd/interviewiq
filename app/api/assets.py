@@ -7,12 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_current_user
-from app.core.r2 import create_presigned_put_url
+from app.core.r2 import create_presigned_get_url, create_presigned_put_url
 from app.db.database import get_db
 from app.db.models import Asset, Session, User
 from app.schemas.asset import (
     AssetCompleteRequest,
     AssetListResponse,
+    AssetReadUrlResponse,
     AssetResponse,
     AssetUploadUrlRequest,
     AssetUploadUrlResponse,
@@ -170,6 +171,43 @@ async def complete_asset_upload(
     await db.commit()
     await db.refresh(asset)
     return _asset_response(asset)
+
+
+@router.get(
+    "/sessions/{session_id}/assets/{asset_id}/read-url",
+    response_model=AssetReadUrlResponse,
+)
+async def create_asset_read_url(
+    session_id: str,
+    asset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_user_session(db=db, user_id=current_user.id, session_id=session_id)
+    result = await db.execute(
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.session_id == session_id,
+            Asset.user_id == current_user.id,
+        )
+    )
+    asset = result.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if asset.status == "pending":
+        raise HTTPException(status_code=409, detail="Asset upload is not completed")
+
+    try:
+        read_url = create_presigned_get_url(object_key=asset.object_key)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return AssetReadUrlResponse(
+        assetId=asset.id,
+        objectKey=asset.object_key,
+        readUrl=read_url,
+        expiresIn=settings.R2_PRESIGN_EXPIRES_SECONDS,
+    )
 
 
 @router.get("/sessions/{session_id}/assets", response_model=AssetListResponse)

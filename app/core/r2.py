@@ -26,11 +26,7 @@ def _canonical_uri(bucket: str, object_key: str) -> str:
     return "/" + "/".join(quote(part, safe="") for part in parts)
 
 
-def create_presigned_put_url(
-    *,
-    object_key: str,
-    expires_seconds: int | None = None,
-) -> str:
+def _validate_r2_settings() -> None:
     if not settings.R2_ACCOUNT_ID:
         raise RuntimeError("R2_ACCOUNT_ID is not configured")
     if not settings.R2_ACCESS_KEY_ID:
@@ -39,6 +35,15 @@ def create_presigned_put_url(
         raise RuntimeError("R2_SECRET_ACCESS_KEY is not configured")
     if not settings.R2_BUCKET:
         raise RuntimeError("R2_BUCKET is not configured")
+
+
+def _create_presigned_url(
+    *,
+    method: str,
+    object_key: str,
+    expires_seconds: int | None = None,
+) -> str:
+    _validate_r2_settings()
 
     now = datetime.now(timezone.utc)
     amz_date = now.strftime("%Y%m%dT%H%M%SZ")
@@ -65,7 +70,7 @@ def create_presigned_put_url(
     payload_hash = "UNSIGNED-PAYLOAD"
     canonical_request = "\n".join(
         [
-            "PUT",
+            method,
             _canonical_uri(settings.R2_BUCKET, object_key),
             canonical_query,
             canonical_headers,
@@ -90,4 +95,28 @@ def create_presigned_put_url(
     return (
         f"https://{host}{_canonical_uri(settings.R2_BUCKET, object_key)}"
         f"?{canonical_query}&X-Amz-Signature={signature}"
+    )
+
+
+def create_presigned_put_url(
+    *,
+    object_key: str,
+    expires_seconds: int | None = None,
+) -> str:
+    return _create_presigned_url(
+        method="PUT",
+        object_key=object_key,
+        expires_seconds=expires_seconds,
+    )
+
+
+def create_presigned_get_url(
+    *,
+    object_key: str,
+    expires_seconds: int | None = None,
+) -> str:
+    return _create_presigned_url(
+        method="GET",
+        object_key=object_key,
+        expires_seconds=expires_seconds,
     )

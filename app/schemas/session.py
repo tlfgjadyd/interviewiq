@@ -13,6 +13,12 @@ class SessionCreate(BaseModel):
     totalQuestions: int = Field(default=12, ge=1, le=30)
 
 
+class QuestionMeta(BaseModel):
+    questionId: str
+    topic: str
+    analysisFocus: str
+
+
 class SessionCreateResponse(BaseModel):
     sessionId: str
     answerTurnId: str
@@ -22,6 +28,7 @@ class SessionCreateResponse(BaseModel):
     totalQuestions: int
     phase: str
     phaseGoal: str
+    currentQuestionMeta: QuestionMeta
 
 
 class AnswerFinishRequest(BaseModel):
@@ -44,6 +51,7 @@ class AnswerFinishResponse(BaseModel):
     totalQuestions: int
     phase: str
     phaseGoal: str
+    nextQuestionMeta: QuestionMeta | None = None
     sessionFinished: bool = False
     reportId: str | None = None
 
@@ -72,6 +80,24 @@ class AnswerAudioResponse(BaseModel):
     audioPath: str
     mimeType: str
     durationMs: int
+
+
+class AnswerAudioAssetRequest(BaseModel):
+    assetId: str
+    language: str | None = None
+    browserTranscript: str | None = None
+    browserLatestText: str | None = None
+
+
+class AnswerAudioAssetResponse(BaseModel):
+    sessionId: str
+    answerTurnId: str
+    assetId: str
+    status: Literal["processed", "failed"]
+    audioPath: str
+    mimeType: str | None = None
+    durationMs: int | None = None
+    transcription: dict[str, Any]
 
 
 class NextQuestionResponse(BaseModel):

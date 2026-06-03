@@ -19,10 +19,11 @@ CourseStage = Literal[
 SessionType = Literal["baseline", "drill", "full"]
 SessionStatus = Literal["created", "active", "finished", "failed", "cancelled"]
 TargetPhase = Literal[
-    "opening",
-    "project_competency",
-    "collaboration_problem_solving",
-    "fit_closing",
+    "ice_breaking",
+    "basic_personality",
+    "job_competency",
+    "deep_dive",
+    "closing",
 ]
 ReportType = Literal["baseline_report", "drill_report", "full_report", "final_report"]
 ReportStatus = Literal["generating", "ready", "failed"]
@@ -119,6 +120,7 @@ class RuntimeSessionResponse(BaseModel):
     totalQuestions: int
     phase: str
     phaseGoal: str
+    currentQuestionMeta: dict[str, Any]
 
 
 class CourseSessionStartResponse(BaseModel):
