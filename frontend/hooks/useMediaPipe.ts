@@ -78,6 +78,7 @@ export const useMediapipe = (
   const lastDebugLogTimeRef = useRef(0);
   const optionsRef = useRef(options);
   const lastSentVisionChunkRef = useRef<string | null>(null);
+  const lastVisionTransportWarningTimeRef = useRef(0);
   const visionChunkSamplesRef = useRef<VisionChunkSample[]>([]);
 
   const { updateMetrics } = useMetrics();
@@ -429,10 +430,46 @@ export const useMediapipe = (
                 },
                 body: JSON.stringify(visionChunk),
               }
-            ).catch((error) => {
-              console.error("Failed to send vision chunk:", error);
-            });
+            )
+              .then((response) => {
+                if (!response.ok) {
+                  console.error("[vision-chunk-send-failed]", {
+                    sessionId: mediaPipeOptions.sessionId,
+                    answerTurnId: mediaPipeOptions.answerTurnId,
+                    chunkId: timing.chunkId,
+                    status: response.status,
+                  });
+                  return;
+                }
+
+                console.info("[vision-chunk-sent]", {
+                  sessionId: mediaPipeOptions.sessionId,
+                  answerTurnId: mediaPipeOptions.answerTurnId,
+                  chunkId: timing.chunkId,
+                  sampleCount: samples.length,
+                });
+              })
+              .catch((error) => {
+                console.error("[vision-chunk-send-error]", {
+                  sessionId: mediaPipeOptions.sessionId,
+                  answerTurnId: mediaPipeOptions.answerTurnId,
+                  chunkId: timing.chunkId,
+                  error,
+                });
+              });
           }
+        } else if (
+          mediaPipeOptions.enabled &&
+          currentTime - lastVisionTransportWarningTimeRef.current >= 2000
+        ) {
+          lastVisionTransportWarningTimeRef.current = currentTime;
+          console.warn("[vision-chunk-skip]", {
+            hasSessionId: Boolean(mediaPipeOptions.sessionId),
+            hasAnswerTurnId: Boolean(mediaPipeOptions.answerTurnId),
+            hasChunkMs: Boolean(mediaPipeOptions.chunkMs),
+            hasTurnStartedAtMs: mediaPipeOptions.turnStartedAtMs !== undefined,
+            hasBackendBaseUrl: Boolean(mediaPipeOptions.backendBaseUrl),
+          });
         }
 
         if (currentTime - lastDebugLogTimeRef.current >= 500) {

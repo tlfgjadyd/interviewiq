@@ -1885,6 +1885,15 @@ async def receive_vision_chunk(session_id: str, payload: VisionChunkCreate):
             },
         },
     )
+    logger.info(
+        "session.vision_chunk session_id=%s answer_turn_id=%s chunk_id=%s t0=%s t1=%s risk=%s",
+        session_id,
+        payload.answerTurnId,
+        payload.chunkId,
+        payload.t0,
+        payload.t1,
+        payload.vision.behaviorRiskScore,
+    )
     return ChunkAck(
         sessionId=session_id,
         answerTurnId=payload.answerTurnId,

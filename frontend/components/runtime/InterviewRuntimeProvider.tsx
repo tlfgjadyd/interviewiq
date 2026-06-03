@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { SettingsProvider } from "@/lib/settings-provider";
@@ -55,6 +56,49 @@ const emptyMetrics: AnswerMetrics = {
 };
 
 const fallbackQuestionText = "자기소개를 부탁드립니다.";
+
+type BrowserSpeechRecognitionResult = {
+  isFinal: boolean;
+  0?: {
+    transcript?: string;
+  };
+};
+
+type BrowserSpeechRecognitionEvent = {
+  resultIndex?: number;
+  results: ArrayLike<BrowserSpeechRecognitionResult>;
+};
+
+type BrowserSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  onerror: ((event: unknown) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+const getBrowserSpeechRecognition = ():
+  | BrowserSpeechRecognitionConstructor
+  | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const speechWindow = window as Window & {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  };
+
+  return (
+    speechWindow.SpeechRecognition ??
+    speechWindow.webkitSpeechRecognition ??
+    null
+  );
+};
 
 const analysisFocusList = (
   meta?: RuntimeQuestionMeta
@@ -108,6 +152,24 @@ const InterviewRuntimeBridge = ({
   } = useInterviewSession();
   const [elapsedSec, setElapsedSec] = useState(0);
   const [drillResults, setDrillResults] = useState<DrillSessionResult[]>([]);
+  const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const finalTranscriptRef = useRef("");
+  const latestTranscriptRef = useRef("");
+
+  const stopBrowserSpeechRecognition = useCallback(() => {
+    const recognition = speechRecognitionRef.current;
+    speechRecognitionRef.current = null;
+
+    if (!recognition) {
+      return;
+    }
+
+    try {
+      recognition.stop();
+    } catch (error) {
+      console.warn("[interview-transcript-stop-failed]", error);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAnswerRecording) {
@@ -152,13 +214,75 @@ const InterviewRuntimeBridge = ({
 
   const startAnswer = useCallback(() => {
     setElapsedSec(0);
+    finalTranscriptRef.current = "";
+    latestTranscriptRef.current = "";
+    stopBrowserSpeechRecognition();
+
+    const SpeechRecognition = getBrowserSpeechRecognition();
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = "ko-KR";
+      recognition.onresult = (event) => {
+        let finalText = "";
+        let interimText = "";
+
+        for (
+          let index = event.resultIndex ?? 0;
+          index < event.results.length;
+          index += 1
+        ) {
+          const result = event.results[index];
+          const transcript = result?.[0]?.transcript ?? "";
+
+          if (result?.isFinal) {
+            finalText += transcript;
+          } else {
+            interimText += transcript;
+          }
+        }
+
+        if (finalText.trim()) {
+          finalTranscriptRef.current =
+            `${finalTranscriptRef.current} ${finalText}`.trim();
+        }
+
+        latestTranscriptRef.current =
+          `${finalTranscriptRef.current} ${interimText}`.trim();
+      };
+      recognition.onerror = (event) => {
+        console.warn("[interview-transcript-error]", event);
+      };
+
+      try {
+        recognition.start();
+        speechRecognitionRef.current = recognition;
+        console.info("[interview-transcript-started]");
+      } catch (error) {
+        console.warn("[interview-transcript-start-failed]", error);
+      }
+    } else {
+      console.warn("[interview-transcript-unavailable]");
+    }
+
     setAnswerRecording(true);
-  }, [setAnswerRecording]);
+  }, [setAnswerRecording, stopBrowserSpeechRecognition]);
 
   const endAnswer = useCallback(async () => {
     const finishedAnswerTurnId = session?.answerTurnId;
     const finishedQuestion = session?.currentQuestionMeta;
-    const finishResult = await finishAnswer("button");
+    const browserTranscript = latestTranscriptRef.current.trim();
+    stopBrowserSpeechRecognition();
+    console.info("[interview-finish-answer]", {
+      sessionId: session?.sessionId,
+      answerTurnId: session?.answerTurnId,
+      browserTranscriptLength: browserTranscript.length,
+    });
+    const finishResult = await finishAnswer("button", null, {
+      browserTranscript,
+      language: "ko-KR",
+    });
     setElapsedSec(0);
 
     if (
@@ -190,7 +314,13 @@ const InterviewRuntimeBridge = ({
     };
     setDrillResults((current) => [...current, result]);
     return result;
-  }, [drillResults.length, config, finishAnswer, session]);
+  }, [
+    drillResults.length,
+    config,
+    finishAnswer,
+    session,
+    stopBrowserSpeechRecognition,
+  ]);
 
   const finishSession = useCallback(async () => {
     await finishBaseSession();
