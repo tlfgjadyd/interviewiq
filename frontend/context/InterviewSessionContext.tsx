@@ -124,7 +124,7 @@ type InterviewSessionContextValue = {
     endedBy?: "voice_command" | "silence" | "button" | "keyboard" | "manual",
     endPhrase?: string | null,
     metadata?: AnswerFinishMetadata
-  ) => Promise<void>;
+  ) => Promise<AnswerFinishResponse | null>;
   finishSession: () => Promise<SessionFinishResponse | null>;
   setAnswerRecording: (recording: boolean) => void;
   setLatestVision: (analysis: InterviewBehaviorAnalysis | null) => void;
@@ -245,7 +245,7 @@ export const InterviewSessionProvider = ({
       metadata: AnswerFinishMetadata = {}
     ) => {
       if (!session) {
-        return;
+        return null;
       }
 
       setIsFinishingAnswer(true);
@@ -308,6 +308,7 @@ export const InterviewSessionProvider = ({
         );
         setLatestVision(null);
         setIsAnswerRecording(false);
+        return data;
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to finish answer";

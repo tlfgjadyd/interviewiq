@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import type {
-  DrillAttempt,
   DrillTarget,
   QuestionSetId,
   SessionType,
@@ -31,7 +30,6 @@ type SessionRecord = {
   status: "active" | "finished";
   reportId?: string;
   chunks: unknown[];
-  attempts: DrillAttempt[];
   report?: unknown;
 };
 
@@ -100,7 +98,6 @@ export async function POST(request: Request, context: RouteContext) {
       createdAt: new Date().toISOString(),
       status: "active",
       chunks: [],
-      attempts: [],
     };
 
     sessions.set(sessionId, record);
@@ -156,16 +153,6 @@ export async function POST(request: Request, context: RouteContext) {
     });
 
     return NextResponse.json({ ok: true });
-  }
-
-  if (action === "drill-attempts") {
-    const body = (await request.json().catch(() => null)) as DrillAttempt | null;
-    if (!body?.attemptId) {
-      return jsonError("Invalid drill attempt", 400);
-    }
-
-    session.attempts.push(body);
-    return NextResponse.json(body);
   }
 
   if (action === "answers" && answerTurnId && finishAction === "audio") {
@@ -281,10 +268,6 @@ export async function GET(_request: Request, context: RouteContext) {
 
   if (action === "chunks") {
     return NextResponse.json({ sessionId, chunks: session.chunks });
-  }
-
-  if (action === "drill-attempts") {
-    return NextResponse.json({ sessionId, attempts: session.attempts });
   }
 
   if (action === "report") {

@@ -1,7 +1,6 @@
 "use client";
 
 import type {
-  DrillAttempt,
   DrillPlan,
   InterviewReport,
   InterviewReportQuestion,
@@ -177,33 +176,5 @@ export const loadDrillPlan = (planId?: string | null): DrillPlan => {
     return JSON.parse(raw) as DrillPlan;
   } catch {
     return fallbackDrillPlan;
-  }
-};
-
-export const saveDrillAttempt = async (
-  sessionId: string,
-  attempt: DrillAttempt
-): Promise<DrillAttempt> => {
-  const backendBaseUrl = getBackendBaseUrl();
-  const url = backendBaseUrl
-    ? `${backendBaseUrl}/api/sessions/${sessionId}/drill-attempts`
-    : `/api/sessions/${sessionId}/drill-attempts`;
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(attempt),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to save drill attempt: ${response.status}`);
-    }
-
-    return (await response.json()) as DrillAttempt;
-  } catch {
-    return attempt;
   }
 };

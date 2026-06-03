@@ -15,11 +15,13 @@ import {
   InterviewSessionProvider,
   useInterviewSession,
 } from "@/context/InterviewSessionContext";
-import { saveDrillAttempt } from "@/lib/session-api";
+import { getReport } from "@/lib/session-api";
 import type {
   AnswerMetrics,
   AnswerState,
   DrillAttempt,
+  DrillTarget,
+  InterviewReport,
   InterviewSession,
   RuntimeConfig,
   RuntimeQuestionMeta,
@@ -58,6 +60,35 @@ const analysisFocusList = (
   meta?: RuntimeQuestionMeta
 ): DrillAttempt["analysisFocus"] | undefined =>
   Array.isArray(meta?.analysisFocus) ? meta.analysisFocus : undefined;
+
+const reportMetricsForTarget = (
+  report: InterviewReport,
+  target?: DrillTarget
+): AnswerMetrics => {
+  const averageScore = report.metrics.length
+    ? Math.round(
+        report.metrics.reduce((sum, metric) => sum + metric.score, 0) /
+          report.metrics.length
+      )
+    : undefined;
+
+  if (target === "specificity") {
+    return { audio: {}, vision: {}, content: { specificityScore: averageScore } };
+  }
+
+  if (target === "filler_words" || target === "pause") {
+    return {
+      audio: {
+        fillerCount:
+          averageScore === undefined ? undefined : Math.max(0, 100 - averageScore),
+      },
+      vision: {},
+      content: {},
+    };
+  }
+
+  return { audio: {}, vision: {}, content: { structureScore: averageScore } };
+};
 
 const InterviewRuntimeBridge = ({
   children,
@@ -127,23 +158,26 @@ const InterviewRuntimeBridge = ({
   const endAnswer = useCallback(async () => {
     const finishedAnswerTurnId = session?.answerTurnId;
     const finishedQuestion = session?.currentQuestionMeta;
-    await finishAnswer("button");
+    const finishResult = await finishAnswer("button");
     setElapsedSec(0);
 
     if (
       config.sessionType !== "drill" ||
       !session ||
       !finishedAnswerTurnId ||
-      !config.drillId
+      !config.drillId ||
+      !finishResult?.sessionFinished
     ) {
       return null;
     }
 
+    const report = await getReport(session.sessionId);
     const attemptNo = attempts.length + 1;
     const attempt: DrillAttempt = {
       attemptId: `attempt_${crypto.randomUUID().slice(0, 8)}`,
       drillId: config.drillId,
       sessionId: session.sessionId,
+      reportId: report.reportId,
       answerTurnId: finishedAnswerTurnId,
       questionId: finishedQuestion?.questionId,
       questionOrder: finishedQuestion?.order,
@@ -151,13 +185,12 @@ const InterviewRuntimeBridge = ({
       topic: finishedQuestion?.topic as DrillAttempt["topic"],
       analysisFocus: analysisFocusList(finishedQuestion),
       attemptNo,
-      metrics: createMockAttemptMetrics(config.drillTarget, attemptNo),
-      passed: attemptNo >= 2,
+      metrics: reportMetricsForTarget(report, config.drillTarget),
+      passed: report.totalScore >= 75,
       createdAt: new Date().toISOString(),
     };
-    const savedAttempt = await saveDrillAttempt(session.sessionId, attempt);
-    setAttempts((current) => [...current, savedAttempt]);
-    return savedAttempt;
+    setAttempts((current) => [...current, attempt]);
+    return attempt;
   }, [attempts.length, config, finishAnswer, session]);
 
   const finishSession = useCallback(async () => {
@@ -264,38 +297,6 @@ const InterviewRuntimeBridge = ({
       {children}
     </InterviewRuntimeContext.Provider>
   );
-};
-
-const createMockAttemptMetrics = (
-  drillTarget: RuntimeConfig["drillTarget"],
-  attemptNo: number
-): AnswerMetrics => {
-  const improvement = Math.min(attemptNo - 1, 2);
-
-  if (drillTarget === "filler_words") {
-    return {
-      audio: {
-        fillerCount: Math.max(1, 5 - improvement * 2),
-        pauseRatio: 0.18,
-      },
-      vision: {},
-      content: {
-        structureScore: 64 + improvement * 6,
-      },
-    };
-  }
-
-  return {
-    audio: {
-      fillerCount: Math.max(1, 4 - improvement),
-    },
-    vision: {},
-    content: {
-      structureScore: 66 + improvement * 8,
-      specificityScore: 61 + improvement * 7,
-      relevanceScore: 70 + improvement * 5,
-    },
-  };
 };
 
 export const InterviewRuntimeProvider = ({

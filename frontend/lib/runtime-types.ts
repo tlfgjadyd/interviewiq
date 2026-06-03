@@ -141,6 +141,7 @@ export type DrillAttempt = {
   attemptId: string;
   drillId: string;
   sessionId: string;
+  reportId?: string;
   answerTurnId: string;
   questionId?: string;
   questionOrder?: number;
