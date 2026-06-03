@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import tempfile
 import uuid
@@ -52,6 +53,7 @@ from app.schemas.session import (
 )
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+logger = logging.getLogger("uvicorn.error")
 rag_retriever = RagRetriever()
 question_generator = QuestionGenerator()
 audio_transcriber = AudioTranscriber()
@@ -1659,6 +1661,14 @@ async def start_runtime_session(
     answer_turn_id = f"a_{uuid.uuid4().hex[:12]}"
     progress = _phase_for_question(1, payload.totalQuestions)
     first_question = _first_question(payload)
+    logger.info(
+        "session.start session_id=%s question_index=%s source=%s question_id=%s topic=%s",
+        resolved_session_id,
+        progress["questionIndex"],
+        first_question.source,
+        progress["questionMeta"]["questionId"],
+        progress["questionMeta"]["topic"],
+    )
 
     meta = {
         "sessionId": resolved_session_id,
@@ -2157,6 +2167,13 @@ async def finish_answer(
             status="finished",
             report=report,
         )
+        logger.info(
+            "session.report_ready session_id=%s report_id=%s answered=%s total=%s",
+            session_id,
+            report_id,
+            len(report.get("questions") or []),
+            meta.get("totalQuestions"),
+        )
         return AnswerFinishResponse(
             answerTurnId=answer_turn_id,
             status="analysis_ready",
@@ -2184,6 +2201,14 @@ async def finish_answer(
     await client.rpush(_turns_key(session_id), next_answer_turn_id)
     await client.expire(_turns_key(session_id), REDIS_TTL_SECONDS)
     await _sync_db_session_from_runtime(session_id, meta, status="active")
+    logger.info(
+        "session.next_question session_id=%s question_index=%s source=%s question_id=%s topic=%s",
+        session_id,
+        next_progress["questionIndex"] if next_progress else None,
+        next_question.source if next_question else None,
+        next_progress["questionMeta"]["questionId"] if next_progress else None,
+        next_progress["questionMeta"]["topic"] if next_progress else None,
+    )
 
     return AnswerFinishResponse(
         answerTurnId=answer_turn_id,
