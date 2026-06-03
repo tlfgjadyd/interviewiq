@@ -32,13 +32,17 @@ class GeneratedQuestion:
 
 class QuestionGenerator:
     def __init__(self) -> None:
-        api_key = settings.OPENROUTER_API_KEY or settings.OPENAI_API_KEY
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=settings.OPENROUTER_BASE_URL,
+        api_key = (settings.OPENROUTER_API_KEY or settings.OPENAI_API_KEY or "").strip()
+        self.client = (
+            OpenAI(
+                api_key=api_key,
+                base_url=settings.OPENROUTER_BASE_URL,
+            )
+            if api_key
+            else None
         )
         self.model = settings.OPENROUTER_QUESTION_MODEL
-        self.enabled = settings.ENABLE_LLM_QUESTION_GENERATION
+        self.enabled = settings.ENABLE_LLM_QUESTION_GENERATION and self.client is not None
 
     def generate_first_question(
         self,
@@ -101,6 +105,9 @@ class QuestionGenerator:
         return self._generate_question(prompt, fallback_question)
 
     def _generate_question(self, prompt: dict[str, Any], fallback_question: str) -> GeneratedQuestion:
+        if self.client is None:
+            return GeneratedQuestion(text=fallback_question, source="fallback_missing_api_key")
+
         try:
             response = self.client.chat.completions.create(
                 model=self.model,

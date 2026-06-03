@@ -2,15 +2,28 @@ import json
 import re
 import tempfile
 import uuid
+import asyncio
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.deps import get_current_user
 from app.core.redis import REDIS_TTL_SECONDS, get_redis
+from app.core.r2 import create_presigned_get_url
+from app.db.database import AsyncSessionLocal
+from app.db.database import get_db
+from app.db.models import Asset
+from app.db.models import Report as DbReport
+from app.db.models import Session as DbSession
+from app.db.models import User
 from app.llm import QuestionGenerator
 from app.llm.question_generator import GeneratedQuestion
-from app.llm.transcriber import AudioTranscriber
+from app.llm.transcriber import AudioTranscriber, TranscriptionResult
 from app.rag import RagRetriever
 from app.rag.schema import RagDocument, RagMetadata
 from app.schemas.chunk import (
@@ -23,6 +36,8 @@ from app.schemas.chunk import (
     VisionChunkCreate,
 )
 from app.schemas.session import (
+    AnswerAudioAssetRequest,
+    AnswerAudioAssetResponse,
     AnswerAudioMetadata,
     AnswerAudioResponse,
     AnswerFinishRequest,
@@ -71,22 +86,94 @@ SKILL_KEYWORDS = [
 ]
 INTERVIEW_PHASES = [
     {
-        "phase": "opening",
-        "goal": "자기소개, 지원동기, 대표 경험을 넓게 확인한다.",
+        "phase": "ice_breaking",
+        "goal": "자기소개, 지원동기, 가치관을 통해 답변의 기본 톤과 방향을 확인한다.",
     },
     {
-        "phase": "project_competency",
-        "goal": "프로젝트 경험에서 본인의 역할, 기술 선택 이유, 문제 해결 과정, 결과를 확인한다.",
+        "phase": "basic_personality",
+        "goal": "기본 인성, 상황 대응, 팀워크 경험을 확인한다.",
     },
     {
-        "phase": "collaboration_problem_solving",
-        "goal": "협업, 갈등 해결, 커뮤니케이션, 문제 해결 방식을 확인한다.",
+        "phase": "job_competency",
+        "goal": "직무 지식, 산업 이해도, 프로젝트 경험을 통해 직무 역량을 확인한다.",
     },
     {
-        "phase": "fit_closing",
-        "goal": "회사와 직무 적합도, 성장 방향, 마지막으로 강조하고 싶은 내용을 확인한다.",
+        "phase": "deep_dive",
+        "goal": "상황형 또는 압박 질문으로 답변의 구체성, 일관성, 문제 해결 깊이를 확인한다.",
+    },
+    {
+        "phase": "closing",
+        "goal": "마무리 답변과 역질문을 통해 직무 적합도와 준비도를 확인한다.",
     },
 ]
+INTERVIEW_PHASE_GOALS = {phase["phase"]: phase["goal"] for phase in INTERVIEW_PHASES}
+QUESTION_BLUEPRINTS = [
+    {
+        "phase": "ice_breaking",
+        "topic": "motivation",
+        "analysisFocus": "지원 동기와 회사/직무 관심도의 구체성을 확인한다.",
+    },
+    {
+        "phase": "ice_breaking",
+        "topic": "values",
+        "analysisFocus": "일하는 방식과 가치관이 직무와 연결되는지 확인한다.",
+    },
+    {
+        "phase": "ice_breaking",
+        "topic": "self_introduction",
+        "analysisFocus": "자기소개가 핵심 경험과 강점을 명확하게 전달하는지 확인한다.",
+    },
+    {
+        "phase": "basic_personality",
+        "topic": "values",
+        "analysisFocus": "기본 인성과 의사결정 기준이 일관적인지 확인한다.",
+    },
+    {
+        "phase": "basic_personality",
+        "topic": "situational",
+        "analysisFocus": "상황 판단과 문제 대응 과정을 구조적으로 설명하는지 확인한다.",
+    },
+    {
+        "phase": "basic_personality",
+        "topic": "teamwork",
+        "analysisFocus": "협업, 갈등 조율, 커뮤니케이션 경험을 구체적으로 설명하는지 확인한다.",
+    },
+    {
+        "phase": "job_competency",
+        "topic": "technical_knowledge",
+        "analysisFocus": "직무 기술 지식과 선택 근거를 정확하게 설명하는지 확인한다.",
+    },
+    {
+        "phase": "job_competency",
+        "topic": "industry_knowledge",
+        "analysisFocus": "지원 산업과 회사 맥락을 이해하고 답변에 반영하는지 확인한다.",
+    },
+    {
+        "phase": "job_competency",
+        "topic": "project_experience",
+        "analysisFocus": "프로젝트에서 본인의 역할, 문제 해결 과정, 결과를 수치와 근거로 설명하는지 확인한다.",
+    },
+    {
+        "phase": "deep_dive",
+        "topic": "situational",
+        "analysisFocus": "꼬리질문이나 압박 상황에서도 답변의 논리와 일관성을 유지하는지 확인한다.",
+    },
+    {
+        "phase": "deep_dive",
+        "topic": "situational",
+        "analysisFocus": "복잡한 상황에서 trade-off와 대안을 설명하는 깊이를 확인한다.",
+    },
+    {
+        "phase": "closing",
+        "topic": "general",
+        "analysisFocus": "마무리 답변과 역질문에서 준비도, 관심도, 성장 방향을 확인한다.",
+    },
+]
+REPORT_TYPE_BY_SESSION_TYPE = {
+    "baseline": "baseline_report",
+    "drill": "drill_report",
+    "full": "full_report",
+}
 
 
 def _session_meta_key(session_id: str) -> str:
@@ -132,21 +219,40 @@ def _session_rag_docs_key(session_id: str) -> str:
 def _phase_for_question(question_index: int, total_questions: int) -> dict[str, Any]:
     safe_total = max(total_questions, 1)
     safe_index = min(max(question_index, 1), safe_total)
-    phase_count = len(INTERVIEW_PHASES)
-    phase_index = min((safe_index - 1) * phase_count // safe_total, phase_count - 1)
-    phase = INTERVIEW_PHASES[phase_index]
-    phase_start = (phase_index * safe_total) // phase_count + 1
-    next_phase_start = ((phase_index + 1) * safe_total) // phase_count + 1
-    phase_end = min(max(next_phase_start - 1, phase_start), safe_total)
+    blueprint_index = min(
+        (safe_index - 1) * len(QUESTION_BLUEPRINTS) // safe_total,
+        len(QUESTION_BLUEPRINTS) - 1,
+    )
+    blueprint = QUESTION_BLUEPRINTS[blueprint_index]
+    phase_name = blueprint["phase"]
+    mapped_phases = [
+        QUESTION_BLUEPRINTS[
+            min(
+                (index - 1) * len(QUESTION_BLUEPRINTS) // safe_total,
+                len(QUESTION_BLUEPRINTS) - 1,
+            )
+        ]["phase"]
+        for index in range(1, safe_total + 1)
+    ]
+    phase_question_indices = [
+        index for index, mapped_phase in enumerate(mapped_phases, start=1)
+        if mapped_phase == phase_name
+    ]
+    phase_question_index = phase_question_indices.index(safe_index) + 1
     return {
         "questionIndex": safe_index,
         "totalQuestions": safe_total,
-        "phase": phase["phase"],
-        "phaseGoal": phase["goal"],
-        "phaseQuestionIndex": safe_index - phase_start + 1,
-        "phaseQuestionTotal": phase_end - phase_start + 1,
+        "phase": phase_name,
+        "phaseGoal": INTERVIEW_PHASE_GOALS[phase_name],
+        "phaseQuestionIndex": phase_question_index,
+        "phaseQuestionTotal": len(phase_question_indices),
         "remainingQuestions": max(safe_total - safe_index, 0),
         "isFinalQuestion": safe_index >= safe_total,
+        "questionMeta": {
+            "questionId": f"q{safe_index:02d}_{phase_name}_{blueprint['topic']}",
+            "topic": blueprint["topic"],
+            "analysisFocus": blueprint["analysisFocus"],
+        },
     }
 
 
@@ -221,6 +327,20 @@ async def _load_answer_chunks(session_id: str, answer_turn_id: str) -> list[dict
     return sorted(chunks, key=lambda item: (item.get("t0", 0), item.get("chunkId", "")))
 
 
+async def _load_session_chunks(session_id: str) -> list[dict[str, Any]]:
+    chunks = []
+    for answer_turn_id in await _load_turn_ids(session_id):
+        chunks.extend(await _load_answer_chunks(session_id, answer_turn_id))
+    return sorted(
+        chunks,
+        key=lambda item: (
+            str(item.get("answerTurnId", "")),
+            item.get("t0", 0),
+            item.get("chunkId", ""),
+        ),
+    )
+
+
 async def _load_turn_ids(session_id: str) -> list[str]:
     client = await _redis()
     turn_ids = await client.lrange(_turns_key(session_id), 0, -1)
@@ -254,6 +374,129 @@ def _count_chunks(chunks: list[dict[str, Any]]) -> AnswerChunkCounts:
         audioFeatureReady=ready("audioFeatureReady"),
         analysisReady=ready("analysisReady"),
     )
+
+
+def _safe_storage_id(value: str) -> str:
+    return "".join(char for char in value if char.isalnum() or char in {"_", "-"})
+
+
+def _audio_suffix(*, file_name: str | None = None, mime_type: str | None = None) -> str:
+    original_suffix = Path(file_name or "").suffix
+    if original_suffix.startswith(".") and len(original_suffix) <= 12:
+        return original_suffix
+
+    mime_extensions = {
+        "audio/webm": ".webm",
+        "video/webm": ".webm",
+        "audio/mpeg": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/wav": ".wav",
+    }
+    return mime_extensions.get((mime_type or "").lower(), ".webm")
+
+
+def _download_url_to_path(url: str, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with urlopen(url, timeout=60) as response, path.open("wb") as output:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            output.write(chunk)
+
+
+def _transcription_to_dict(transcription: TranscriptionResult) -> dict[str, Any]:
+    return {
+        "text": transcription.text,
+        "source": transcription.source,
+        "model": transcription.model,
+        "error": transcription.error,
+    }
+
+
+def _transcription_from_dict(value: dict[str, Any]) -> TranscriptionResult:
+    return TranscriptionResult(
+        text=str(value.get("text") or ""),
+        source=str(value.get("source") or "unknown"),
+        model=value.get("model"),
+        error=value.get("error"),
+    )
+
+
+async def _store_answer_audio(
+    *,
+    session_id: str,
+    answer_turn_id: str,
+    audio_path: Path,
+    mime_type: str | None,
+    duration_ms: int | None,
+    language: str | None,
+    browser_transcript: str | None,
+    browser_latest_text: str | None,
+    started_at: int | None = None,
+    ended_at: int | None = None,
+    asset: Asset | None = None,
+) -> dict[str, Any]:
+    stored_audio = {
+        "sessionId": session_id,
+        "answerTurnId": answer_turn_id,
+        "audioPath": str(audio_path),
+        "audioMimeType": mime_type,
+        "audioMetadata": {
+            "startedAt": started_at,
+            "endedAt": ended_at,
+            "durationMs": duration_ms,
+            "language": language,
+            "browserTranscript": browser_transcript,
+            "browserLatestText": browser_latest_text,
+        },
+        "status": {
+            "audioReceived": True,
+            "speechReady": False,
+            "audioFeatureReady": False,
+        },
+    }
+    if asset is not None:
+        stored_audio["asset"] = {
+            "assetId": asset.id,
+            "objectKey": asset.object_key,
+            "bucket": asset.bucket,
+            "assetType": asset.asset_type,
+        }
+    await _write_json(_answer_audio_key(session_id, answer_turn_id), stored_audio)
+    return stored_audio
+
+
+async def _transcribe_answer_audio_record(
+    *,
+    session_id: str,
+    answer_turn_id: str,
+    language: str | None = None,
+) -> tuple[dict[str, Any], TranscriptionResult]:
+    answer_audio = await _read_json(_answer_audio_key(session_id, answer_turn_id))
+    if answer_audio is None:
+        raise HTTPException(status_code=404, detail="Answer audio not found")
+
+    existing_transcription = answer_audio.get("transcription")
+    if isinstance(existing_transcription, dict):
+        return answer_audio, _transcription_from_dict(existing_transcription)
+
+    audio_metadata = (
+        answer_audio.get("audioMetadata", {})
+        if isinstance(answer_audio.get("audioMetadata"), dict)
+        else {}
+    )
+    transcription = await audio_transcriber.transcribe_answer_audio(
+        audio_path=answer_audio.get("audioPath"),
+        language=language or audio_metadata.get("language"),
+    )
+    answer_audio["transcription"] = _transcription_to_dict(transcription)
+    answer_audio["status"] = {
+        **answer_audio.get("status", {}),
+        "speechReady": bool(transcription.text.strip()),
+    }
+    await _write_json(_answer_audio_key(session_id, answer_turn_id), answer_audio)
+    return answer_audio, transcription
 
 
 def _short_sentences(text: str, limit: int = 3) -> list[str]:
@@ -578,12 +821,449 @@ def _summarize_nonverbal(chunks: list[dict[str, Any]]) -> dict[str, Any]:
     return {"summary": summary, "signals": signals, "events": events}
 
 
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _average(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), 4)
+
+
+def _ratio(count: int, total: int) -> float | None:
+    if total <= 0:
+        return None
+    return round(count / total, 4)
+
+
+def _chunk_duration_ms(chunk: dict[str, Any]) -> int:
+    t0 = chunk.get("t0")
+    t1 = chunk.get("t1")
+    if isinstance(t0, int) and isinstance(t1, int) and t1 > t0:
+        return t1 - t0
+    return 0
+
+
+def _build_report_metrics(
+    *,
+    meta: dict[str, Any],
+    chunks: list[dict[str, Any]],
+    analyses: list[dict[str, Any]],
+) -> dict[str, Any]:
+    vision_chunks = [chunk for chunk in chunks if isinstance(chunk.get("vision"), dict)]
+    audio_signal_chunks = [
+        chunk for chunk in chunks if isinstance(chunk.get("realtimeAudioSignals"), dict)
+    ]
+    answered_turns = [
+        analysis for analysis in analyses if analysis.get("status") == "analysis_ready"
+    ]
+
+    behavior_risk_scores = []
+    nonverbal_risk_scores = []
+    gaze_penalties = []
+    leg_shaking_scores = []
+    gaze_away_count = 0
+    bad_posture_count = 0
+    fidgeting_count = 0
+    leg_shaking_count = 0
+    gaze_away_ms = 0
+    bad_posture_ms = 0
+    event_counts: dict[str, int] = {}
+
+    for chunk in vision_chunks:
+        duration_ms = _chunk_duration_ms(chunk)
+        vision = chunk["vision"]
+        behavior = _number(vision.get("behaviorRiskScore"))
+        nonverbal = _number(vision.get("nonverbalRiskScore"))
+        if behavior is not None:
+            behavior_risk_scores.append(behavior)
+        if nonverbal is not None:
+            nonverbal_risk_scores.append(nonverbal)
+
+        gaze = vision.get("gaze") if isinstance(vision.get("gaze"), dict) else {}
+        gaze_penalty = _number(gaze.get("gazePenalty"))
+        if gaze_penalty is not None:
+            gaze_penalties.append(gaze_penalty)
+        is_looking_away = bool(gaze.get("isLookingAway"))
+        if is_looking_away:
+            gaze_away_count += 1
+        gaze_away_duration = _number(gaze.get("gazeAwayDurationMs"))
+        if gaze_away_duration is not None:
+            gaze_away_ms += int(gaze_away_duration)
+        elif is_looking_away:
+            gaze_away_ms += duration_ms
+
+        posture = vision.get("posture") if isinstance(vision.get("posture"), dict) else {}
+        is_bad_posture = bool(posture.get("isBadPosture") or posture.get("isPostureCollapsed"))
+        if is_bad_posture:
+            bad_posture_count += 1
+            bad_posture_ms += duration_ms
+
+        gesture = vision.get("gesture") if isinstance(vision.get("gesture"), dict) else {}
+        leg_shaking_score = _number(gesture.get("legShakingScore"))
+        if leg_shaking_score is not None:
+            leg_shaking_scores.append(leg_shaking_score)
+
+        states = vision.get("states") if isinstance(vision.get("states"), dict) else {}
+        if states.get("isFidgeting"):
+            fidgeting_count += 1
+        if states.get("isLegShaking"):
+            leg_shaking_count += 1
+
+        for event in vision.get("events", []) if isinstance(vision.get("events"), list) else []:
+            event_type = event.get("type") if isinstance(event, dict) else None
+            if event_type:
+                event_counts[str(event_type)] = event_counts.get(str(event_type), 0) + 1
+
+    speaking_ratios = []
+    rms_volumes = []
+    peak_volumes = []
+    silence_ms_values = []
+    too_low_count = 0
+    too_high_count = 0
+    slow_pace_count = 0
+    fast_pace_count = 0
+
+    for chunk in audio_signal_chunks:
+        signals = chunk["realtimeAudioSignals"]
+        speaking_ratio = _number(signals.get("isSpeakingRatio"))
+        rms_volume = _number(signals.get("rmsVolume"))
+        peak_volume = _number(signals.get("peakVolume"))
+        silence_ms = _number(signals.get("silenceDurationMs"))
+        if speaking_ratio is not None:
+            speaking_ratios.append(speaking_ratio)
+        if rms_volume is not None:
+            rms_volumes.append(rms_volume)
+        if peak_volume is not None:
+            peak_volumes.append(peak_volume)
+        if silence_ms is not None:
+            silence_ms_values.append(silence_ms)
+        if signals.get("volumeWarning") == "too_low":
+            too_low_count += 1
+        if signals.get("volumeWarning") == "too_high":
+            too_high_count += 1
+        if signals.get("paceHint") == "slow":
+            slow_pace_count += 1
+        if signals.get("paceHint") == "fast":
+            fast_pace_count += 1
+
+    long_silence_threshold_ms = 3000
+    answer_texts = [str(analysis.get("answerText") or "") for analysis in answered_turns]
+    answer_lengths = [len(text.strip()) for text in answer_texts if text.strip()]
+    transcript_sources: dict[str, int] = {}
+    phase_metrics: dict[str, dict[str, Any]] = {}
+    answer_phase_by_turn: dict[str, str] = {}
+
+    def phase_bucket(phase: str) -> dict[str, Any]:
+        return phase_metrics.setdefault(
+            phase,
+            {
+                "answerCount": 0,
+                "totalAnswerLengthChars": 0,
+                "visionChunkCount": 0,
+                "audioSignalChunkCount": 0,
+                "gazeAwayCount": 0,
+                "totalGazeAwayMs": 0,
+                "badPostureCount": 0,
+                "totalBadPostureMs": 0,
+                "longSilenceCount": 0,
+                "totalSilenceMs": 0,
+                "_behaviorRiskScores": [],
+                "_nonverbalRiskScores": [],
+                "_gazePenalties": [],
+                "_speakingRatios": [],
+                "_rmsVolumes": [],
+            },
+        )
+
+    for analysis in answered_turns:
+        source = str(analysis.get("answerTextSource") or "none")
+        transcript_sources[source] = transcript_sources.get(source, 0) + 1
+        progress = analysis.get("interviewProgress")
+        phase = progress.get("phase") if isinstance(progress, dict) else None
+        if phase:
+            normalized_phase = str(phase)
+            answer_turn_id = analysis.get("answerTurnId")
+            if answer_turn_id:
+                answer_phase_by_turn[str(answer_turn_id)] = normalized_phase
+            bucket = phase_bucket(normalized_phase)
+            answer_text = str(analysis.get("answerText") or "").strip()
+            bucket["answerCount"] += 1
+            bucket["totalAnswerLengthChars"] += len(answer_text)
+
+    for chunk in chunks:
+        answer_turn_id = str(chunk.get("answerTurnId") or "")
+        phase = answer_phase_by_turn.get(answer_turn_id)
+        if not phase:
+            continue
+        bucket = phase_bucket(phase)
+        duration_ms = _chunk_duration_ms(chunk)
+
+        vision = chunk.get("vision") if isinstance(chunk.get("vision"), dict) else None
+        if vision:
+            bucket["visionChunkCount"] += 1
+            behavior = _number(vision.get("behaviorRiskScore"))
+            nonverbal = _number(vision.get("nonverbalRiskScore"))
+            if behavior is not None:
+                bucket["_behaviorRiskScores"].append(behavior)
+            if nonverbal is not None:
+                bucket["_nonverbalRiskScores"].append(nonverbal)
+
+            gaze = vision.get("gaze") if isinstance(vision.get("gaze"), dict) else {}
+            gaze_penalty = _number(gaze.get("gazePenalty"))
+            if gaze_penalty is not None:
+                bucket["_gazePenalties"].append(gaze_penalty)
+            is_looking_away = bool(gaze.get("isLookingAway"))
+            if is_looking_away:
+                bucket["gazeAwayCount"] += 1
+            gaze_away_duration = _number(gaze.get("gazeAwayDurationMs"))
+            if gaze_away_duration is not None:
+                bucket["totalGazeAwayMs"] += int(gaze_away_duration)
+            elif is_looking_away:
+                bucket["totalGazeAwayMs"] += duration_ms
+
+            posture = vision.get("posture") if isinstance(vision.get("posture"), dict) else {}
+            if posture.get("isBadPosture") or posture.get("isPostureCollapsed"):
+                bucket["badPostureCount"] += 1
+                bucket["totalBadPostureMs"] += duration_ms
+
+        audio_signals = (
+            chunk.get("realtimeAudioSignals")
+            if isinstance(chunk.get("realtimeAudioSignals"), dict)
+            else None
+        )
+        if audio_signals:
+            bucket["audioSignalChunkCount"] += 1
+            speaking_ratio = _number(audio_signals.get("isSpeakingRatio"))
+            rms_volume = _number(audio_signals.get("rmsVolume"))
+            silence_ms = _number(audio_signals.get("silenceDurationMs"))
+            if speaking_ratio is not None:
+                bucket["_speakingRatios"].append(speaking_ratio)
+            if rms_volume is not None:
+                bucket["_rmsVolumes"].append(rms_volume)
+            if silence_ms is not None:
+                bucket["totalSilenceMs"] += int(silence_ms)
+                if silence_ms >= long_silence_threshold_ms:
+                    bucket["longSilenceCount"] += 1
+
+    for phase_bucket in phase_metrics.values():
+        answer_count = int(phase_bucket["answerCount"])
+        total_chars = int(phase_bucket["totalAnswerLengthChars"])
+        vision_count = int(phase_bucket["visionChunkCount"])
+        audio_count = int(phase_bucket["audioSignalChunkCount"])
+        phase_bucket["averageAnswerLengthChars"] = (
+            round(total_chars / answer_count, 2) if answer_count else 0
+        )
+        phase_bucket["averageBehaviorRiskScore"] = _average(
+            [float(value) for value in phase_bucket.pop("_behaviorRiskScores", [])]
+        )
+        phase_bucket["averageNonverbalRiskScore"] = _average(
+            [float(value) for value in phase_bucket.pop("_nonverbalRiskScores", [])]
+        )
+        phase_bucket["averageGazePenalty"] = _average(
+            [float(value) for value in phase_bucket.pop("_gazePenalties", [])]
+        )
+        phase_bucket["gazeAwayRatio"] = _ratio(int(phase_bucket["gazeAwayCount"]), vision_count)
+        phase_bucket["badPostureRatio"] = _ratio(
+            int(phase_bucket["badPostureCount"]),
+            vision_count,
+        )
+        phase_bucket["averageSpeakingRatio"] = _average(
+            [float(value) for value in phase_bucket.pop("_speakingRatios", [])]
+        )
+        phase_bucket["averageRmsVolume"] = _average(
+            [float(value) for value in phase_bucket.pop("_rmsVolumes", [])]
+        )
+        phase_bucket["longSilenceThresholdMs"] = long_silence_threshold_ms
+
+    total_silence_ms = int(sum(silence_ms_values))
+    drill_recommendation = _calculate_phase_weakness(phase_metrics)
+
+    return {
+        "schemaVersion": "metrics_v1",
+        "session": {
+            "sessionType": meta.get("sessionType"),
+            "totalQuestions": meta.get("totalQuestions"),
+            "answeredQuestions": len(answered_turns),
+            "chunkCount": len(chunks),
+            "visionChunkCount": len(vision_chunks),
+            "audioSignalChunkCount": len(audio_signal_chunks),
+        },
+        "nonverbal": {
+            "averageBehaviorRiskScore": _average(behavior_risk_scores),
+            "averageNonverbalRiskScore": _average(nonverbal_risk_scores),
+            "averageGazePenalty": _average(gaze_penalties),
+            "averageLegShakingScore": _average(leg_shaking_scores),
+            "gazeAwayRatio": _ratio(gaze_away_count, len(vision_chunks)),
+            "totalGazeAwayMs": gaze_away_ms,
+            "badPostureRatio": _ratio(bad_posture_count, len(vision_chunks)),
+            "totalBadPostureMs": bad_posture_ms,
+            "fidgetingRatio": _ratio(fidgeting_count, len(vision_chunks)),
+            "legShakingRatio": _ratio(leg_shaking_count, len(vision_chunks)),
+            "eventCounts": event_counts,
+        },
+        "audio": {
+            "averageSpeakingRatio": _average(speaking_ratios),
+            "averageRmsVolume": _average(rms_volumes),
+            "averagePeakVolume": _average(peak_volumes),
+            "totalSilenceMs": total_silence_ms,
+            "longSilenceCount": sum(
+                1 for silence_ms in silence_ms_values if silence_ms >= long_silence_threshold_ms
+            ),
+            "longSilenceThresholdMs": long_silence_threshold_ms,
+            "tooLowVolumeRatio": _ratio(too_low_count, len(audio_signal_chunks)),
+            "tooHighVolumeRatio": _ratio(too_high_count, len(audio_signal_chunks)),
+            "slowPaceRatio": _ratio(slow_pace_count, len(audio_signal_chunks)),
+            "fastPaceRatio": _ratio(fast_pace_count, len(audio_signal_chunks)),
+        },
+        "content": {
+            "answerCount": len(answered_turns),
+            "transcriptSources": transcript_sources,
+            "averageAnswerLengthChars": _average([float(value) for value in answer_lengths]),
+            "totalAnswerLengthChars": sum(answer_lengths),
+        },
+        "phase": phase_metrics,
+        "drillRecommendation": drill_recommendation,
+    }
+
+
+def _build_answer_chunk_metrics(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    vision_chunks = [chunk for chunk in chunks if isinstance(chunk.get("vision"), dict)]
+    audio_signal_chunks = [
+        chunk for chunk in chunks if isinstance(chunk.get("realtimeAudioSignals"), dict)
+    ]
+    behavior_scores = []
+    gaze_away_count = 0
+    total_gaze_away_ms = 0
+    speaking_ratios = []
+    silence_values = []
+
+    for chunk in vision_chunks:
+        vision = chunk["vision"]
+        behavior = _number(vision.get("behaviorRiskScore"))
+        if behavior is not None:
+            behavior_scores.append(behavior)
+        gaze = vision.get("gaze") if isinstance(vision.get("gaze"), dict) else {}
+        is_looking_away = bool(gaze.get("isLookingAway"))
+        if is_looking_away:
+            gaze_away_count += 1
+        gaze_away_duration = _number(gaze.get("gazeAwayDurationMs"))
+        if gaze_away_duration is not None:
+            total_gaze_away_ms += int(gaze_away_duration)
+        elif is_looking_away:
+            total_gaze_away_ms += _chunk_duration_ms(chunk)
+
+    for chunk in audio_signal_chunks:
+        signals = chunk["realtimeAudioSignals"]
+        speaking_ratio = _number(signals.get("isSpeakingRatio"))
+        silence_ms = _number(signals.get("silenceDurationMs"))
+        if speaking_ratio is not None:
+            speaking_ratios.append(speaking_ratio)
+        if silence_ms is not None:
+            silence_values.append(silence_ms)
+
+    return {
+        "chunkCount": len(chunks),
+        "visionChunkCount": len(vision_chunks),
+        "audioSignalChunkCount": len(audio_signal_chunks),
+        "averageBehaviorRiskScore": _average(behavior_scores),
+        "gazeAwayRatio": _ratio(gaze_away_count, len(vision_chunks)),
+        "totalGazeAwayMs": total_gaze_away_ms,
+        "averageSpeakingRatio": _average(speaking_ratios),
+        "totalSilenceMs": int(sum(silence_values)),
+    }
+
+
+def _bounded_score(value: float | None, *, scale: float = 100.0) -> float:
+    if value is None:
+        return 0.0
+    return max(0.0, min(float(value) / scale * 100.0, 100.0))
+
+
+def _calculate_phase_weakness(phase_metrics: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    phase_scores: dict[str, dict[str, Any]] = {}
+    for phase, metrics in phase_metrics.items():
+        nonverbal_score = _bounded_score(_number(metrics.get("averageNonverbalRiskScore")))
+        gaze_score = _bounded_score(_number(metrics.get("gazeAwayRatio")), scale=1.0)
+        posture_score = _bounded_score(_number(metrics.get("badPostureRatio")), scale=1.0)
+        silence_count = _number(metrics.get("longSilenceCount")) or 0.0
+        silence_score = min(silence_count * 20.0, 100.0)
+
+        speaking_ratio = _number(metrics.get("averageSpeakingRatio"))
+        speaking_score = 0.0
+        if speaking_ratio is not None and speaking_ratio < 0.45:
+            speaking_score = min((0.45 - speaking_ratio) / 0.45 * 100.0, 100.0)
+
+        answer_length = _number(metrics.get("averageAnswerLengthChars"))
+        content_score = 0.0
+        if answer_length is not None and answer_length < 120:
+            content_score = min((120 - answer_length) / 120 * 100.0, 100.0)
+
+        weakness_score = round(
+            nonverbal_score * 0.25
+            + gaze_score * 0.2
+            + posture_score * 0.15
+            + silence_score * 0.2
+            + speaking_score * 0.1
+            + content_score * 0.1,
+            2,
+        )
+
+        reasons = []
+        if nonverbal_score >= 50:
+            reasons.append("비언어 위험도 평균이 높습니다.")
+        if gaze_score >= 35:
+            reasons.append("시선 이탈 비율이 높습니다.")
+        if posture_score >= 35:
+            reasons.append("자세 불안정 비율이 높습니다.")
+        if silence_score >= 40:
+            reasons.append("긴 침묵 구간이 반복되었습니다.")
+        if speaking_score >= 35:
+            reasons.append("말하기 비율이 낮게 나타났습니다.")
+        if content_score >= 35:
+            reasons.append("답변 길이가 짧아 근거 설명이 부족할 수 있습니다.")
+        if not reasons:
+            reasons.append("상대적으로 보완 우선순위가 높은 phase입니다.")
+
+        metrics["weaknessScore"] = weakness_score
+        metrics["weaknessReasons"] = reasons
+        phase_scores[phase] = {
+            "weaknessScore": weakness_score,
+            "reasons": reasons,
+        }
+
+    if not phase_scores:
+        return {
+            "targetPhase": None,
+            "weaknessScore": None,
+            "phaseScores": {},
+            "reasons": [],
+        }
+
+    target_phase, target = max(
+        phase_scores.items(),
+        key=lambda item: (item[1]["weaknessScore"], item[0]),
+    )
+    return {
+        "targetPhase": target_phase,
+        "weaknessScore": target["weaknessScore"],
+        "phaseScores": phase_scores,
+        "reasons": target["reasons"],
+    }
+
+
 def _build_session_report(
     *,
     session_id: str,
     report_id: str,
     meta: dict[str, Any],
     analyses: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
 ) -> dict[str, Any]:
     answered_turns = [
         analysis for analysis in analyses if analysis.get("status") == "analysis_ready"
@@ -598,20 +1278,36 @@ def _build_session_report(
         for analysis in answered_turns
         if isinstance(analysis.get("nonverbalFeedback"), dict)
     ]
+    chunks_by_turn: dict[str, list[dict[str, Any]]] = {}
+    for chunk in chunks:
+        answer_turn_id = str(chunk.get("answerTurnId") or "")
+        if answer_turn_id:
+            chunks_by_turn.setdefault(answer_turn_id, []).append(chunk)
+
     question_reports = []
     for analysis in answered_turns:
         progress = analysis.get("interviewProgress", {})
+        question_meta = (
+            progress.get("questionMeta")
+            if isinstance(progress.get("questionMeta"), dict)
+            else {}
+        )
+        answer_turn_id = str(analysis.get("answerTurnId") or "")
         question_reports.append(
             {
-                "answerTurnId": analysis.get("answerTurnId"),
+                "answerTurnId": answer_turn_id,
+                "questionId": question_meta.get("questionId"),
                 "questionIndex": progress.get("questionIndex"),
                 "phase": progress.get("phase"),
                 "phaseGoal": progress.get("phaseGoal"),
+                "topic": question_meta.get("topic"),
+                "analysisFocus": question_meta.get("analysisFocus"),
                 "answerText": analysis.get("answerText", ""),
                 "answerTextSource": analysis.get("answerTextSource"),
                 "transcription": analysis.get("transcription"),
                 "contentFeedback": analysis.get("contentFeedback", []),
                 "nonverbalFeedback": analysis.get("nonverbalFeedback", {}),
+                "metrics": _build_answer_chunk_metrics(chunks_by_turn.get(answer_turn_id, [])),
                 "endedBy": analysis.get("endedBy"),
                 "endedAt": analysis.get("endedAt"),
             }
@@ -626,6 +1322,13 @@ def _build_session_report(
         "긴 침묵이나 시선 이탈 구간은 최종 리포트에서 구간별로 확인하고 다음 연습 때 줄여봅니다.",
         "마지막 답변에서는 직무와 연결되는 핵심 강점을 한 문장으로 정리하는 연습이 좋습니다.",
     ]
+    metrics = _build_report_metrics(meta=meta, chunks=chunks, analyses=analyses)
+    drill_recommendation = metrics.get("drillRecommendation", {})
+    target_phase = (
+        drill_recommendation.get("targetPhase")
+        if isinstance(drill_recommendation, dict)
+        else None
+    )
 
     return {
         "sessionId": session_id,
@@ -636,6 +1339,7 @@ def _build_session_report(
         "interviewType": meta.get("interviewType"),
         "totalQuestions": meta.get("totalQuestions"),
         "answeredQuestions": len(answered_turns),
+        "metrics": metrics,
         "overallSummary": summary_sentences,
         "overallFeedback": {
             "content": "답변 내용은 역할, 과정, 결과 근거가 함께 드러날수록 설득력이 높아집니다.",
@@ -647,6 +1351,13 @@ def _build_session_report(
         "questions": question_reports,
         "nextPractice": {
             "recommendedQuestion": "가장 자신 있는 프로젝트 경험을 STAR 구조로 1분 안에 다시 설명해 보세요.",
+            "targetPhase": target_phase,
+            "weaknessScore": drill_recommendation.get("weaknessScore")
+            if isinstance(drill_recommendation, dict)
+            else None,
+            "reasons": drill_recommendation.get("reasons", [])
+            if isinstance(drill_recommendation, dict)
+            else [],
             "focus": ["역할 명확화", "수치 기반 결과", "시선과 침묵 구간 점검"],
         },
     }
@@ -659,26 +1370,265 @@ async def _save_session_report(
 ) -> dict[str, Any]:
     resolved_report_id = report_id or meta.get("reportId") or f"r_{uuid.uuid4().hex[:12]}"
     analyses = await _load_answer_analyses(session_id)
+    chunks = await _load_session_chunks(session_id)
     report = _build_session_report(
         session_id=session_id,
         report_id=resolved_report_id,
         meta=meta,
         analyses=analyses,
+        chunks=chunks,
     )
     await _write_json(_session_report_key(session_id), report)
     return report
 
 
-@router.post("", response_model=SessionCreateResponse)
-async def create_session(payload: SessionCreate):
+def _report_metrics_from_redis_report(report: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+    metrics = report.get("metrics")
+    if isinstance(metrics, dict):
+        return metrics
+    questions = report.get("questions") if isinstance(report.get("questions"), list) else []
+    return {
+        "schemaVersion": "metrics_v1",
+        "session": {
+            "sessionType": meta.get("sessionType"),
+            "totalQuestions": report.get("totalQuestions") or meta.get("totalQuestions"),
+            "answeredQuestions": report.get("answeredQuestions") or len(questions),
+            "questionCount": len(questions),
+        },
+    }
+
+
+def _metric_value(metrics: dict[str, Any], path: str) -> float | None:
+    current: Any = metrics
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return _number(current)
+
+
+def _metric_delta(
+    *,
+    current_metrics: dict[str, Any],
+    reference_metrics: dict[str, Any] | None,
+    path: str,
+) -> dict[str, Any] | None:
+    if not reference_metrics:
+        return None
+    current_value = _metric_value(current_metrics, path)
+    reference_value = _metric_value(reference_metrics, path)
+    if current_value is None or reference_value is None:
+        return None
+    return {
+        "current": round(current_value, 4),
+        "reference": round(reference_value, 4),
+        "delta": round(current_value - reference_value, 4),
+        "deltaPercent": (
+            round((current_value - reference_value) / reference_value * 100, 2)
+            if reference_value != 0
+            else None
+        ),
+    }
+
+
+def _build_metrics_comparison(
+    *,
+    current_metrics: dict[str, Any],
+    baseline_report: DbReport | None,
+    previous_report: DbReport | None,
+) -> dict[str, Any]:
+    metric_paths = [
+        "nonverbal.averageNonverbalRiskScore",
+        "nonverbal.gazeAwayRatio",
+        "nonverbal.badPostureRatio",
+        "nonverbal.fidgetingRatio",
+        "audio.averageSpeakingRatio",
+        "audio.totalSilenceMs",
+        "audio.longSilenceCount",
+        "content.averageAnswerLengthChars",
+    ]
+
+    def compare_to(reference: DbReport | None) -> dict[str, Any]:
+        if reference is None or not isinstance(reference.metrics, dict):
+            return {"reportId": None, "metrics": {}}
+        comparisons = {}
+        for path in metric_paths:
+            delta = _metric_delta(
+                current_metrics=current_metrics,
+                reference_metrics=reference.metrics,
+                path=path,
+            )
+            if delta is not None:
+                comparisons[path] = delta
+        return {
+            "reportId": reference.id,
+            "reportType": reference.report_type,
+            "sessionId": reference.session_id,
+            "metrics": comparisons,
+        }
+
+    baseline_comparison = compare_to(baseline_report)
+    previous_comparison = compare_to(previous_report)
+    summary = []
+    gaze_delta = baseline_comparison["metrics"].get("nonverbal.gazeAwayRatio", {}).get("delta")
+    silence_delta = baseline_comparison["metrics"].get("audio.longSilenceCount", {}).get("delta")
+    posture_delta = baseline_comparison["metrics"].get("nonverbal.badPostureRatio", {}).get("delta")
+    if gaze_delta is not None:
+        summary.append(
+            {
+                "metric": "gazeAwayRatio",
+                "direction": "decreased" if gaze_delta < 0 else "increased" if gaze_delta > 0 else "unchanged",
+                "delta": gaze_delta,
+            }
+        )
+    if silence_delta is not None:
+        summary.append(
+            {
+                "metric": "longSilenceCount",
+                "direction": "decreased" if silence_delta < 0 else "increased" if silence_delta > 0 else "unchanged",
+                "delta": silence_delta,
+            }
+        )
+    if posture_delta is not None:
+        summary.append(
+            {
+                "metric": "badPostureRatio",
+                "direction": "decreased" if posture_delta < 0 else "increased" if posture_delta > 0 else "unchanged",
+                "delta": posture_delta,
+            }
+        )
+
+    return {
+        "schemaVersion": "comparison_v1",
+        "baseline": baseline_comparison,
+        "previous": previous_comparison,
+        "summary": summary,
+    }
+
+
+async def _load_comparison_references(
+    *,
+    db: Any,
+    course_id: str,
+    user_id: str,
+    current_report_type: str,
+) -> tuple[DbReport | None, DbReport | None]:
+    baseline_result = await db.execute(
+        select(DbReport)
+        .where(
+            DbReport.course_id == course_id,
+            DbReport.user_id == user_id,
+            DbReport.report_type == "baseline_report",
+            DbReport.status == "ready",
+        )
+        .order_by(DbReport.created_at.asc())
+    )
+    baseline_report = baseline_result.scalars().first()
+
+    previous_result = await db.execute(
+        select(DbReport)
+        .where(
+            DbReport.course_id == course_id,
+            DbReport.user_id == user_id,
+            DbReport.status == "ready",
+            DbReport.report_type != "final_report",
+        )
+        .order_by(DbReport.created_at.desc())
+    )
+    previous_report = previous_result.scalars().first()
+
+    if current_report_type == "baseline_report":
+        baseline_report = None
+        previous_report = None
+
+    return baseline_report, previous_report
+
+
+async def _sync_db_session_from_runtime(
+    session_id: str,
+    meta: dict[str, Any],
+    *,
+    status: str | None = None,
+    report: dict[str, Any] | None = None,
+) -> None:
+    if AsyncSessionLocal is None or not meta.get("dbSessionId"):
+        return
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(DbSession).where(
+                DbSession.id == meta["dbSessionId"],
+                DbSession.user_id == meta.get("userId"),
+            )
+        )
+        db_session = result.scalar_one_or_none()
+        if db_session is None:
+            return
+
+        db_session.question_index = int(meta.get("questionIndex") or db_session.question_index)
+        db_session.total_questions = int(meta.get("totalQuestions") or db_session.total_questions)
+        if status:
+            db_session.status = status
+        if status == "finished":
+            db_session.ended_at = db_session.ended_at or datetime.utcnow()
+
+        if report is not None:
+            report_id = report.get("reportId") or meta.get("reportId") or f"r_{uuid.uuid4().hex[:12]}"
+            report_type = REPORT_TYPE_BY_SESSION_TYPE.get(
+                str(meta.get("sessionType") or ""),
+                "baseline_report",
+            )
+            metrics = _report_metrics_from_redis_report(report, meta)
+            baseline_report, previous_report = await _load_comparison_references(
+                db=db,
+                course_id=meta["courseId"],
+                user_id=meta["userId"],
+                current_report_type=report_type,
+            )
+            comparison = _build_metrics_comparison(
+                current_metrics=metrics,
+                baseline_report=baseline_report,
+                previous_report=previous_report,
+            )
+            existing_report = await db.execute(
+                select(DbReport).where(
+                    DbReport.id == report_id,
+                    DbReport.user_id == meta.get("userId"),
+                )
+            )
+            if existing_report.scalar_one_or_none() is None:
+                db.add(
+                    DbReport(
+                        id=report_id,
+                        course_id=meta["courseId"],
+                        session_id=session_id,
+                        user_id=meta["userId"],
+                        report_type=report_type,
+                        summary=" ".join(report.get("overallSummary") or []) or None,
+                        metrics=metrics,
+                        comparison=comparison,
+                        recommendations=report.get("nextPractice") or {},
+                        status="ready",
+                    )
+                )
+
+        await db.commit()
+
+
+async def start_runtime_session(
+    payload: SessionCreate,
+    *,
+    session_id: str | None = None,
+    extra_meta: dict[str, Any] | None = None,
+) -> SessionCreateResponse:
     client = await _redis()
-    session_id = f"s_{uuid.uuid4().hex[:12]}"
+    resolved_session_id = session_id or f"s_{uuid.uuid4().hex[:12]}"
     answer_turn_id = f"a_{uuid.uuid4().hex[:12]}"
     progress = _phase_for_question(1, payload.totalQuestions)
     first_question = _first_question(payload)
 
     meta = {
-        "sessionId": session_id,
+        "sessionId": resolved_session_id,
         "company": payload.company,
         "role": payload.role,
         "interviewType": payload.interviewType,
@@ -689,14 +1639,17 @@ async def create_session(payload: SessionCreate):
         "currentAnswerTurnId": answer_turn_id,
         "currentQuestion": first_question.text,
         "currentQuestionSource": first_question.source,
+        "currentQuestionMeta": progress["questionMeta"],
         **progress,
     }
+    if extra_meta:
+        meta.update(extra_meta)
 
-    await _write_json(_session_meta_key(session_id), meta)
-    await client.rpush(_turns_key(session_id), answer_turn_id)
-    await client.expire(_turns_key(session_id), REDIS_TTL_SECONDS)
+    await _write_json(_session_meta_key(resolved_session_id), meta)
+    await client.rpush(_turns_key(resolved_session_id), answer_turn_id)
+    await client.expire(_turns_key(resolved_session_id), REDIS_TTL_SECONDS)
     return SessionCreateResponse(
-        sessionId=session_id,
+        sessionId=resolved_session_id,
         answerTurnId=answer_turn_id,
         firstQuestion=first_question.text,
         firstQuestionSource=first_question.source,
@@ -704,7 +1657,13 @@ async def create_session(payload: SessionCreate):
         totalQuestions=progress["totalQuestions"],
         phase=progress["phase"],
         phaseGoal=progress["phaseGoal"],
+        currentQuestionMeta=progress["questionMeta"],
     )
+
+
+@router.post("", response_model=SessionCreateResponse)
+async def create_session(payload: SessionCreate):
+    return await start_runtime_session(payload)
 
 
 @router.post("/{session_id}/documents", response_model=SessionDocumentsResponse)
@@ -890,39 +1849,26 @@ async def receive_answer_audio(
             detail="Path answer_turn_id and metadata answerTurnId differ",
         )
 
-    safe_answer_turn_id = "".join(
-        char for char in answer_turn_id if char.isalnum() or char in {"_", "-"}
-    )
-    original_suffix = Path(audio.filename or "").suffix
-    suffix = original_suffix if original_suffix else ".webm"
-    if not suffix.startswith(".") or len(suffix) > 12:
-        suffix = ".webm"
+    safe_answer_turn_id = _safe_storage_id(answer_turn_id)
+    suffix = _audio_suffix(file_name=audio.filename, mime_type=parsed_metadata.mimeType)
 
     audio_dir = Path(tempfile.gettempdir()) / "interviewiq_audio" / "answers"
     audio_dir.mkdir(parents=True, exist_ok=True)
     audio_path = audio_dir / f"{session_id}_{safe_answer_turn_id}{suffix}"
     audio_path.write_bytes(await audio.read())
 
-    stored_audio = {
-        "sessionId": session_id,
-        "answerTurnId": answer_turn_id,
-        "audioPath": str(audio_path),
-        "audioMimeType": parsed_metadata.mimeType,
-        "audioMetadata": {
-            "startedAt": parsed_metadata.startedAt,
-            "endedAt": parsed_metadata.endedAt,
-            "durationMs": parsed_metadata.durationMs,
-            "language": parsed_metadata.language,
-            "browserTranscript": parsed_metadata.browserTranscript,
-            "browserLatestText": parsed_metadata.browserLatestText,
-        },
-        "status": {
-            "audioReceived": True,
-            "speechReady": False,
-            "audioFeatureReady": False,
-        },
-    }
-    await _write_json(_answer_audio_key(session_id, answer_turn_id), stored_audio)
+    await _store_answer_audio(
+        session_id=session_id,
+        answer_turn_id=answer_turn_id,
+        audio_path=audio_path,
+        mime_type=parsed_metadata.mimeType,
+        duration_ms=parsed_metadata.durationMs,
+        language=parsed_metadata.language,
+        browser_transcript=parsed_metadata.browserTranscript,
+        browser_latest_text=parsed_metadata.browserLatestText,
+        started_at=parsed_metadata.startedAt,
+        ended_at=parsed_metadata.endedAt,
+    )
 
     return AnswerAudioResponse(
         sessionId=session_id,
@@ -931,6 +1877,90 @@ async def receive_answer_audio(
         audioPath=str(audio_path),
         mimeType=parsed_metadata.mimeType,
         durationMs=parsed_metadata.durationMs,
+    )
+
+
+@router.post(
+    "/{session_id}/answers/{answer_turn_id}/audio/analyze-asset",
+    response_model=AnswerAudioAssetResponse,
+)
+async def analyze_answer_audio_asset(
+    session_id: str,
+    answer_turn_id: str,
+    payload: AnswerAudioAssetRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_session(session_id)
+    session_result = await db.execute(
+        select(DbSession).where(
+            DbSession.id == session_id,
+            DbSession.user_id == current_user.id,
+        )
+    )
+    db_session = session_result.scalar_one_or_none()
+    if db_session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    asset_result = await db.execute(
+        select(Asset).where(
+            Asset.id == payload.assetId,
+            Asset.session_id == session_id,
+            Asset.user_id == current_user.id,
+        )
+    )
+    asset = asset_result.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if asset.asset_type != "answer_audio":
+        raise HTTPException(status_code=400, detail="Asset is not answer_audio")
+    if asset.answer_turn_id != answer_turn_id:
+        raise HTTPException(status_code=400, detail="Asset answerTurnId does not match path")
+    if asset.status == "pending":
+        raise HTTPException(status_code=409, detail="Asset upload is not completed")
+
+    suffix = _audio_suffix(file_name=asset.object_key, mime_type=asset.mime_type)
+    safe_answer_turn_id = _safe_storage_id(answer_turn_id)
+    audio_dir = Path(tempfile.gettempdir()) / "interviewiq_audio" / "answers"
+    audio_path = audio_dir / f"{session_id}_{safe_answer_turn_id}_{asset.id}{suffix}"
+
+    try:
+        read_url = create_presigned_get_url(object_key=asset.object_key)
+        await asyncio.to_thread(_download_url_to_path, read_url, audio_path)
+    except Exception as exc:
+        asset.status = "failed"
+        await db.commit()
+        raise HTTPException(status_code=502, detail=f"Failed to download R2 asset: {exc}") from exc
+
+    await _store_answer_audio(
+        session_id=session_id,
+        answer_turn_id=answer_turn_id,
+        audio_path=audio_path,
+        mime_type=asset.mime_type,
+        duration_ms=asset.duration_ms,
+        language=payload.language,
+        browser_transcript=payload.browserTranscript,
+        browser_latest_text=payload.browserLatestText,
+        asset=asset,
+    )
+    answer_audio, transcription = await _transcribe_answer_audio_record(
+        session_id=session_id,
+        answer_turn_id=answer_turn_id,
+        language=payload.language,
+    )
+
+    asset.status = "processed"
+    await db.commit()
+
+    return AnswerAudioAssetResponse(
+        sessionId=session_id,
+        answerTurnId=answer_turn_id,
+        assetId=asset.id,
+        status="processed",
+        audioPath=str(audio_path),
+        mimeType=asset.mime_type,
+        durationMs=asset.duration_ms,
+        transcription=answer_audio["transcription"],
     )
 
 
@@ -973,26 +2003,11 @@ async def finish_answer(
     answer_audio = await _read_json(_answer_audio_key(session_id, answer_turn_id))
     transcription = None
     if answer_audio:
-        audio_metadata = (
-            answer_audio.get("audioMetadata", {})
-            if isinstance(answer_audio.get("audioMetadata"), dict)
-            else {}
+        answer_audio, transcription = await _transcribe_answer_audio_record(
+            session_id=session_id,
+            answer_turn_id=answer_turn_id,
+            language=payload.language,
         )
-        transcription = await audio_transcriber.transcribe_answer_audio(
-            audio_path=answer_audio.get("audioPath"),
-            language=payload.language or audio_metadata.get("language"),
-        )
-        answer_audio["transcription"] = {
-            "text": transcription.text,
-            "source": transcription.source,
-            "model": transcription.model,
-            "error": transcription.error,
-        }
-        answer_audio["status"] = {
-            **answer_audio.get("status", {}),
-            "speechReady": bool(transcription.text.strip()),
-        }
-        await _write_json(_answer_audio_key(session_id, answer_turn_id), answer_audio)
 
     speech_chunk_text = " ".join(
         chunk.get("speech", {}).get("text", "")
@@ -1027,6 +2042,7 @@ async def finish_answer(
         "phaseQuestionTotal": meta.get("phaseQuestionTotal"),
         "remainingQuestions": meta.get("remainingQuestions"),
         "isFinalQuestion": meta.get("isFinalQuestion", False),
+        "questionMeta": meta.get("currentQuestionMeta") or meta.get("questionMeta"),
     }
     is_final_answer = bool(current_progress.get("isFinalQuestion")) or int(
         current_progress.get("questionIndex", 1)
@@ -1101,7 +2117,13 @@ async def finish_answer(
         meta["finishedBy"] = "total_questions"
         meta["finishedAt"] = payload.endedAt
         await _write_json(_session_meta_key(session_id), meta)
-        await _save_session_report(session_id, meta, report_id)
+        report = await _save_session_report(session_id, meta, report_id)
+        await _sync_db_session_from_runtime(
+            session_id,
+            meta,
+            status="finished",
+            report=report,
+        )
         return AnswerFinishResponse(
             answerTurnId=answer_turn_id,
             status="analysis_ready",
@@ -1111,8 +2133,9 @@ async def finish_answer(
             nextQuestionSource=None,
             questionIndex=int(current_progress.get("questionIndex", 1)),
             totalQuestions=int(current_progress.get("totalQuestions", 12)),
-            phase=str(current_progress.get("phase") or "fit_closing"),
+            phase=str(current_progress.get("phase") or "closing"),
             phaseGoal=str(current_progress.get("phaseGoal") or INTERVIEW_PHASES[-1]["goal"]),
+            nextQuestionMeta=None,
             sessionFinished=True,
             reportId=report_id,
         )
@@ -1120,10 +2143,14 @@ async def finish_answer(
     meta["currentAnswerTurnId"] = next_answer_turn_id
     meta["currentQuestion"] = next_question.text if next_question else None
     meta["currentQuestionSource"] = next_question.source if next_question else None
+    meta["currentQuestionMeta"] = (
+        next_progress.get("questionMeta") if next_progress else None
+    )
     meta.update(next_progress or {})
     await _write_json(_session_meta_key(session_id), meta)
     await client.rpush(_turns_key(session_id), next_answer_turn_id)
     await client.expire(_turns_key(session_id), REDIS_TTL_SECONDS)
+    await _sync_db_session_from_runtime(session_id, meta, status="active")
 
     return AnswerFinishResponse(
         answerTurnId=answer_turn_id,
@@ -1134,8 +2161,9 @@ async def finish_answer(
         nextQuestionSource=next_question.source if next_question else None,
         questionIndex=next_progress["questionIndex"] if next_progress else 1,
         totalQuestions=next_progress["totalQuestions"] if next_progress else 12,
-        phase=next_progress["phase"] if next_progress else "opening",
+        phase=next_progress["phase"] if next_progress else "ice_breaking",
         phaseGoal=next_progress["phaseGoal"] if next_progress else INTERVIEW_PHASES[0]["goal"],
+        nextQuestionMeta=next_progress["questionMeta"] if next_progress else None,
         sessionFinished=False,
         reportId=None,
     )
@@ -1172,7 +2200,7 @@ async def get_next_question(session_id: str):
         questionSource=meta.get("currentQuestionSource"),
         questionIndex=meta.get("questionIndex", 1),
         totalQuestions=meta.get("totalQuestions", 12),
-        phase=meta.get("phase", "opening"),
+        phase=meta.get("phase", "ice_breaking"),
         phaseGoal=meta.get("phaseGoal", INTERVIEW_PHASES[0]["goal"]),
     )
 
@@ -1214,5 +2242,11 @@ async def finish_session(session_id: str):
     meta["reportId"] = report_id
     meta["finishedBy"] = "manual_session_finish"
     await _write_json(_session_meta_key(session_id), meta)
-    await _save_session_report(session_id, meta, report_id)
+    report = await _save_session_report(session_id, meta, report_id)
+    await _sync_db_session_from_runtime(
+        session_id,
+        meta,
+        status="finished",
+        report=report,
+    )
     return SessionFinishResponse(sessionId=session_id, status="finished", reportId=report_id)
