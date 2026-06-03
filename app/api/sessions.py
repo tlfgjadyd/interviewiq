@@ -712,6 +712,39 @@ def _first_question(payload: SessionCreate) -> GeneratedQuestion:
     return generated
 
 
+def _fallback_question_for_progress(
+    progress: dict[str, Any],
+    *,
+    company: str | None,
+    role: str | None,
+    answer_text: str,
+) -> str:
+    question_meta = (
+        progress.get("questionMeta") if isinstance(progress.get("questionMeta"), dict) else {}
+    )
+    topic = str(question_meta.get("topic") or "general")
+    phase = str(progress.get("phase") or "ice_breaking")
+    company_label = (company or "지원 회사").replace("_", " ")
+    role_label = (role or "지원 직무").replace("_", " ")
+
+    topic_questions = {
+        "motivation": f"{company_label}와 {role_label}에 지원한 이유를 본인의 경험과 연결해서 설명해 주세요.",
+        "values": "일할 때 가장 중요하게 생각하는 기준은 무엇이고, 그 기준이 드러난 경험을 설명해 주세요.",
+        "self_introduction": f"{role_label} 직무와 연결되는 강점 중심으로 자기소개를 해 주세요.",
+        "situational": "예상하지 못한 문제를 만났을 때 상황을 판단하고 해결했던 과정을 설명해 주세요.",
+        "teamwork": "팀 안에서 의견 차이나 갈등을 조율했던 경험과 본인의 역할을 설명해 주세요.",
+        "technical_knowledge": f"{role_label} 업무에서 중요하다고 생각하는 기술 선택과 그 근거를 설명해 주세요.",
+        "industry_knowledge": f"{company_label}가 속한 산업에서 중요하다고 보는 변화와 본인의 준비도를 설명해 주세요.",
+        "project_experience": "가장 자신 있는 프로젝트를 문제 상황, 본인 역할, 해결 과정, 결과 중심으로 설명해 주세요.",
+        "general": "앞선 답변에서 가장 강조하고 싶은 역량을 구체적인 사례와 함께 설명해 주세요.",
+    }
+    if progress.get("isFinalQuestion") or phase == "closing":
+        return f"마지막으로 {company_label} {role_label} 직무에 기여할 수 있는 본인의 강점을 한 가지 경험과 함께 정리해 주세요."
+    if answer_text.strip() and topic == "situational":
+        return "방금 답변한 상황에서 선택지를 비교했던 기준과, 그 결정의 결과를 더 구체적으로 설명해 주세요."
+    return topic_questions.get(topic, topic_questions["general"])
+
+
 def _next_question(
     meta: dict[str, Any],
     answer_text: str,
@@ -755,14 +788,14 @@ def _next_question(
         None,
     )
     progress = interview_progress or {}
-    if progress.get("isFinalQuestion"):
-        fallback = "마지막으로 이 직무와 회사에 본인이 기여할 수 있는 강점을 한 가지 경험과 함께 정리해 주세요."
-    elif followup:
+    fallback = _fallback_question_for_progress(
+        progress,
+        company=meta.get("company"),
+        role=meta.get("role"),
+        answer_text=answer_text,
+    )
+    if followup and not progress.get("questionMeta"):
         fallback = followup
-    elif answer_text.strip():
-        fallback = "방금 답변에서 본인이 직접 맡은 역할과 결과를 수치나 근거 중심으로 조금 더 설명해 주세요."
-    else:
-        fallback = "답변 내용을 아직 확인하지 못했습니다. 같은 질문에 대해 핵심 경험을 다시 설명해 주세요."
     generated = question_generator.generate_followup_question(
         company=meta.get("company"),
         role=meta.get("role"),
