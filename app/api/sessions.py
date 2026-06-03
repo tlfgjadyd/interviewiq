@@ -1319,6 +1319,86 @@ def _build_session_report(
         if answer_turn_id:
             chunks_by_turn.setdefault(answer_turn_id, []).append(chunk)
 
+    answer_text_source_counts: dict[str, int] = {}
+    sample_questions = []
+    transcription_count = 0
+    transcription_text_count = 0
+    for analysis in answered_turns:
+        source = str(analysis.get("answerTextSource") or "none")
+        answer_text_source_counts[source] = answer_text_source_counts.get(source, 0) + 1
+
+        transcription = analysis.get("transcription")
+        transcription_text = ""
+        if isinstance(transcription, dict):
+            transcription_count += 1
+            transcription_text = str(transcription.get("text") or "").strip()
+            if transcription_text:
+                transcription_text_count += 1
+
+        progress = analysis.get("interviewProgress", {})
+        question_meta = (
+            progress.get("questionMeta")
+            if isinstance(progress.get("questionMeta"), dict)
+            else {}
+        )
+        answer_turn_id = str(analysis.get("answerTurnId") or "")
+        turn_chunks = chunks_by_turn.get(answer_turn_id, [])
+        if len(sample_questions) < 5:
+            sample_questions.append(
+                {
+                    "answerTurnId": answer_turn_id,
+                    "questionIndex": progress.get("questionIndex"),
+                    "questionId": question_meta.get("questionId"),
+                    "topic": question_meta.get("topic"),
+                    "answerTextSource": analysis.get("answerTextSource"),
+                    "answerTextLength": len(str(analysis.get("answerText") or "").strip()),
+                    "hasTranscription": isinstance(transcription, dict),
+                    "transcriptionTextLength": len(transcription_text),
+                    "chunkCount": len(turn_chunks),
+                    "visionChunkCount": sum(
+                        1 for chunk in turn_chunks if isinstance(chunk.get("vision"), dict)
+                    ),
+                    "audioSignalChunkCount": sum(
+                        1
+                        for chunk in turn_chunks
+                        if isinstance(chunk.get("realtimeAudioSignals"), dict)
+                    ),
+                }
+            )
+
+    vision_chunk_count = sum(1 for chunk in chunks if isinstance(chunk.get("vision"), dict))
+    audio_signal_chunk_count = sum(
+        1 for chunk in chunks if isinstance(chunk.get("realtimeAudioSignals"), dict)
+    )
+    debug_materials = {
+        "analysesCount": len(analyses),
+        "answeredTurns": len(answered_turns),
+        "nonEmptyAnswerTexts": len(answer_texts),
+        "answerTextSources": answer_text_source_counts,
+        "transcriptions": transcription_count,
+        "nonEmptyTranscriptions": transcription_text_count,
+        "chunkCount": len(chunks),
+        "visionChunkCount": vision_chunk_count,
+        "audioSignalChunkCount": audio_signal_chunk_count,
+        "sampleQuestions": sample_questions,
+        "fallbackReasons": [
+            reason
+            for reason, active in (
+                ("no_non_empty_answer_text", not answer_texts),
+                ("no_non_empty_transcription", transcription_text_count == 0),
+                ("no_vision_chunks", vision_chunk_count == 0),
+                ("no_audio_signal_chunks", audio_signal_chunk_count == 0),
+            )
+            if active
+        ],
+    }
+    logger.info(
+        "report.materials session_id=%s report_id=%s materials=%s",
+        session_id,
+        report_id,
+        json.dumps(debug_materials, ensure_ascii=False),
+    )
+
     question_reports = []
     for analysis in answered_turns:
         progress = analysis.get("interviewProgress", {})
@@ -1375,6 +1455,7 @@ def _build_session_report(
         "totalQuestions": meta.get("totalQuestions"),
         "answeredQuestions": len(answered_turns),
         "metrics": metrics,
+        "debugMaterials": debug_materials,
         "overallSummary": summary_sentences,
         "overallFeedback": {
             "content": "답변 내용은 역할, 과정, 결과 근거가 함께 드러날수록 설득력이 높아집니다.",
