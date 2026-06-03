@@ -1,6 +1,10 @@
-# Question Flow/Topic Audit
+﻿# Question Flow/Topic Audit
 
 ## Current Status
+> Update: question set JSON has moved to the backend. The source of truth is now
+> `app/question_sets/full_13.json` and `app/question_sets/demo_5.json`, loaded by
+> `app/core/question_sets.py`. Frontend question JSON/loader files were removed;
+> frontend sends `questionSetId` and renders backend responses.
 
 The frontend now has a JSON-backed question set structure for `flow x topic`
 interview questions. The implementation is still mock-backed, but the runtime
@@ -33,21 +37,21 @@ frontend/lib/question-types.ts
 Question set JSON files:
 
 ```text
-frontend/data/question-sets/full_13.json
-frontend/data/question-sets/demo_5.json
+app/question_sets/full_13.json
+app/question_sets/demo_5.json
 ```
 
 Question loader:
 
 ```text
-frontend/lib/question-loader.ts
+app/core/question_sets.py
 ```
 
 The loader imports both JSON files and exposes:
 
 ```ts
-getQuestionSet(questionSetId)
-getDefaultQuestionSet()
+load_question_set(questionSetId)
+load_question_set("full_13")
 ```
 
 Invalid or missing `questionSetId` falls back to `full_13`.
@@ -116,7 +120,7 @@ type InterviewQuestion = {
 
 ```ts
 questionSetId: "full_13"
-totalQuestions: getDefaultQuestionSet().questions.length // 13
+totalQuestions: 13
 initialQuestionMeta: full_13.questions[0]
 ```
 

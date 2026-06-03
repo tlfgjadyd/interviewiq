@@ -9,13 +9,9 @@ import {
   useInterviewRuntime,
 } from "@/components/runtime/InterviewRuntimeProvider";
 import { Button } from "@/components/ui/button";
-import { getDefaultQuestionSet } from "@/lib/question-loader";
 import { Maximize2, Square } from "lucide-react";
 
-const defaultQuestionSet = getDefaultQuestionSet();
-const firstQuestion = defaultQuestionSet.questions[0];
-const fallbackQuestion = firstQuestion.text;
-const totalQuestions = defaultQuestionSet.questions.length;
+const totalQuestions = 13;
 
 function InterviewStage() {
   const router = useRouter();
@@ -187,8 +183,6 @@ export default function InterviewPage() {
         questionSetId: "full_13",
         maxAnswerSec: 90,
         totalQuestions,
-        initialQuestion: fallbackQuestion,
-        initialQuestionMeta: firstQuestion,
       }}
     >
       <InterviewStage />

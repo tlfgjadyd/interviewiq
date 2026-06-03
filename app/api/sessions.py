@@ -14,6 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
+from app.core.question_sets import get_question
+from app.core.question_sets import get_question_set_id
+from app.core.question_sets import progress_for_question
 from app.core.redis import REDIS_TTL_SECONDS, get_redis
 from app.core.r2 import create_presigned_get_url
 from app.db.database import AsyncSessionLocal
@@ -218,44 +221,16 @@ def _session_rag_docs_key(session_id: str) -> str:
     return f"session:{session_id}:rag:documents"
 
 
-def _phase_for_question(question_index: int, total_questions: int) -> dict[str, Any]:
-    safe_total = max(total_questions, 1)
-    safe_index = min(max(question_index, 1), safe_total)
-    blueprint_index = min(
-        (safe_index - 1) * len(QUESTION_BLUEPRINTS) // safe_total,
-        len(QUESTION_BLUEPRINTS) - 1,
+def _phase_for_question(
+    question_index: int,
+    total_questions: int,
+    question_set_id: str | None = None,
+) -> dict[str, Any]:
+    return progress_for_question(
+        question_index=question_index,
+        total_questions=total_questions,
+        question_set_id=question_set_id,
     )
-    blueprint = QUESTION_BLUEPRINTS[blueprint_index]
-    phase_name = blueprint["phase"]
-    mapped_phases = [
-        QUESTION_BLUEPRINTS[
-            min(
-                (index - 1) * len(QUESTION_BLUEPRINTS) // safe_total,
-                len(QUESTION_BLUEPRINTS) - 1,
-            )
-        ]["phase"]
-        for index in range(1, safe_total + 1)
-    ]
-    phase_question_indices = [
-        index for index, mapped_phase in enumerate(mapped_phases, start=1)
-        if mapped_phase == phase_name
-    ]
-    phase_question_index = phase_question_indices.index(safe_index) + 1
-    return {
-        "questionIndex": safe_index,
-        "totalQuestions": safe_total,
-        "phase": phase_name,
-        "phaseGoal": INTERVIEW_PHASE_GOALS[phase_name],
-        "phaseQuestionIndex": phase_question_index,
-        "phaseQuestionTotal": len(phase_question_indices),
-        "remainingQuestions": max(safe_total - safe_index, 0),
-        "isFinalQuestion": safe_index >= safe_total,
-        "questionMeta": {
-            "questionId": f"q{safe_index:02d}_{phase_name}_{blueprint['topic']}",
-            "topic": blueprint["topic"],
-            "analysisFocus": blueprint["analysisFocus"],
-        },
-    }
 
 
 async def _redis():
@@ -678,41 +653,11 @@ def _generate_personalized_question(
 
 
 def _first_question(payload: SessionCreate) -> GeneratedQuestion:
-    results = rag_retriever.search(
-        company=payload.company,
-        cluster=payload.cluster,
-        industry=payload.industry,
-        role=payload.role,
-        interview_type=payload.interviewType,
-        doc_types=["question", "evaluation_criteria", "star_guide"],
-        limit=3,
-    )
-    rag_context = [
-        {
-            "id": result.document.id,
-            "content": result.document.content,
-            "metadata": result.document.metadata.model_dump(),
-            "score": result.score,
-            "reasons": result.reasons,
-        }
-        for result in results
-    ]
-    company = payload.company.replace("_", " ")
-    role = payload.role.replace("_", " ")
-    fallback = (
-        f"{company} {role} 직무와 관련해 가장 자신 있게 설명할 수 있는 프로젝트 경험을 "
-        "문제 상황, 본인의 역할, 해결 과정, 결과 중심으로 말씀해 주세요."
-    )
-    generated = question_generator.generate_first_question(
-        company=payload.company,
-        role=payload.role,
-        interview_type=payload.interviewType,
-        rag_context=rag_context,
-        interview_progress=_phase_for_question(1, payload.totalQuestions),
-        fallback_question=fallback,
-    )
-    return generated
+    if payload.sessionType == "drill" and payload.initialQuestion:
+        return GeneratedQuestion(text=payload.initialQuestion, source="drill_initial_question")
 
+    question = get_question(payload.questionSetId, 1)
+    return GeneratedQuestion(text=str(question.get("text") or ""), source="question_set")
 
 def _fallback_question_for_progress(
     progress: dict[str, Any],
@@ -754,6 +699,29 @@ def _next_question(
     nonverbal_feedback: dict[str, Any] | None = None,
     interview_progress: dict[str, Any] | None = None,
 ) -> tuple[GeneratedQuestion, list[dict[str, Any]]]:
+    progress = interview_progress or {}
+    question_meta_for_progress = (
+        progress.get("questionMeta") if isinstance(progress.get("questionMeta"), dict) else {}
+    )
+    json_question_text = str(question_meta_for_progress.get("text") or "").strip()
+    if not json_question_text:
+        try:
+            json_question = get_question(
+                meta.get("questionSetId"),
+                int(progress.get("questionIndex") or 1),
+            )
+            json_question_text = str(json_question.get("text") or "").strip()
+        except (TypeError, ValueError):
+            json_question_text = ""
+
+    should_use_llm = (
+        str(progress.get("phase") or question_meta_for_progress.get("flow") or "")
+        == "deep_dive"
+        or bool(progress.get("isFollowup"))
+    )
+    if json_question_text and not should_use_llm:
+        return GeneratedQuestion(text=json_question_text, source="question_set"), []
+
     results = rag_retriever.search(
         company=meta.get("company"),
         cluster=meta.get("cluster"),
@@ -789,8 +757,7 @@ def _next_question(
         ),
         None,
     )
-    progress = interview_progress or {}
-    fallback = _fallback_question_for_progress(
+    fallback = json_question_text or _fallback_question_for_progress(
         progress,
         company=meta.get("company"),
         role=meta.get("role"),
@@ -1740,7 +1707,8 @@ async def start_runtime_session(
     client = await _redis()
     resolved_session_id = session_id or f"s_{uuid.uuid4().hex[:12]}"
     answer_turn_id = f"a_{uuid.uuid4().hex[:12]}"
-    progress = _phase_for_question(1, payload.totalQuestions)
+    question_set_id = get_question_set_id(payload.questionSetId)
+    progress = _phase_for_question(1, payload.totalQuestions, question_set_id)
     first_question = _first_question(payload)
     logger.info(
         "session.start session_id=%s question_index=%s source=%s question_id=%s topic=%s",
@@ -1756,6 +1724,15 @@ async def start_runtime_session(
         "company": payload.company,
         "role": payload.role,
         "interviewType": payload.interviewType,
+        "sessionType": payload.sessionType,
+        "questionSetId": question_set_id,
+        "courseId": payload.courseId,
+        "questionSetVersion": payload.questionSetVersion,
+        "baselineId": payload.baselineId,
+        "sourceSessionId": payload.sourceSessionId,
+        "drillId": payload.drillId,
+        "drillTarget": payload.drillTarget,
+        "maxAnswerSec": payload.maxAnswerSec,
         "chunkMs": payload.chunkMs,
         "cluster": payload.cluster,
         "industry": payload.industry,
@@ -1774,6 +1751,15 @@ async def start_runtime_session(
     await client.expire(_turns_key(resolved_session_id), REDIS_TTL_SECONDS)
     return SessionCreateResponse(
         sessionId=resolved_session_id,
+        sessionType=payload.sessionType,
+        questionSetId=question_set_id,
+        courseId=payload.courseId,
+        questionSetVersion=payload.questionSetVersion,
+        baselineId=payload.baselineId,
+        sourceSessionId=payload.sourceSessionId,
+        drillId=payload.drillId,
+        drillTarget=payload.drillTarget,
+        maxAnswerSec=payload.maxAnswerSec,
         answerTurnId=answer_turn_id,
         firstQuestion=first_question.text,
         firstQuestionSource=first_question.source,
@@ -2195,6 +2181,7 @@ async def finish_answer(
         next_progress = _phase_for_question(
             next_question_index,
             int(meta.get("totalQuestions", 12)),
+            meta.get("questionSetId"),
         )
         next_question, rag_context = _next_question(
             meta,

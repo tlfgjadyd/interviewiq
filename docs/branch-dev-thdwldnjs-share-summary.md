@@ -1,4 +1,4 @@
-# dev-thdwldnjs 브랜치 공유 정리
+﻿# dev-thdwldnjs 브랜치 공유 정리
 
 ## 1. 문서 목적
 
@@ -187,10 +187,10 @@ analysisFocus
 관련 파일:
 
 ```text
-frontend/data/question-sets/full_13.json
-frontend/data/question-sets/demo_5.json
+app/question_sets/full_13.json
+app/question_sets/demo_5.json
 frontend/lib/question-types.ts
-frontend/lib/question-loader.ts
+app/core/question_sets.py
 app/schemas/session.py
 app/api/sessions.py
 ```
@@ -479,10 +479,10 @@ frontend/lib/training.ts
 질문 세트:
 
 ```text
-frontend/data/question-sets/full_13.json
-frontend/data/question-sets/demo_5.json
+app/question_sets/full_13.json
+app/question_sets/demo_5.json
 frontend/lib/question-types.ts
-frontend/lib/question-loader.ts
+app/core/question_sets.py
 ```
 
 백엔드 세션/리포트:

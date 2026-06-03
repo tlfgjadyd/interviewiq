@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 import type {
   DrillTarget,
   QuestionSetId,
+  RuntimeQuestionMeta,
   SessionType,
 } from "@/lib/runtime-types";
-import { getQuestionSet } from "@/lib/question-loader";
-import type { InterviewQuestion } from "@/lib/question-types";
 import { fallbackReport } from "@/lib/training";
 
 type SessionRecord = {
@@ -20,7 +19,7 @@ type SessionRecord = {
   maxAnswerSec?: number;
   answerTurnId: string;
   firstQuestion: string;
-  currentQuestionMeta?: InterviewQuestion;
+  currentQuestionMeta?: RuntimeQuestionMeta;
   chunkMs: number;
   questionIndex: number;
   totalQuestions: number;
@@ -40,6 +39,29 @@ const PHASE_GOAL =
 
 const makeId = (prefix: string) =>
   `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
+
+const mockFlowForOrder = (order: number) => {
+  if (order <= 3) return "ice_breaking";
+  if (order <= 6) return "basic_personality";
+  if (order <= 9) return "job_competency";
+  if (order <= 11) return "deep_dive";
+  return "closing";
+};
+
+const makeMockQuestion = (order: number): RuntimeQuestionMeta => {
+  const flow = mockFlowForOrder(order);
+  return {
+    questionId: `mock_q${String(order).padStart(2, "0")}`,
+    order,
+    flow,
+    phase: flow,
+    topic: order <= 3 ? "motivation" : order <= 9 ? "project_experience" : "general",
+    title: `Mock question ${order}`,
+    text: `Mock question ${order}. Backend question set is the source of truth when NEXT_PUBLIC_BACKEND_URL is configured.`,
+    intent: PHASE_GOAL,
+    analysisFocus: ["answer_structure", "specificity"],
+  };
+};
 
 type RouteContext = {
   params: Promise<{ path?: string[] }>;
@@ -62,12 +84,12 @@ export async function POST(request: Request, context: RouteContext) {
     const answerTurnId = makeId("answer");
     const sessionType: SessionType =
       body.sessionType === "drill" ? "drill" : "full";
-    const questionSet = getQuestionSet(body.questionSetId);
-    const questionSetId = questionSet.questionSetId;
+    const questionSetId: QuestionSetId =
+      body.questionSetId === "demo_5" ? "demo_5" : "full_13";
     const currentQuestionMeta =
       sessionType === "drill" && typeof body.initialQuestion === "string"
         ? undefined
-        : questionSet.questions[0];
+        : makeMockQuestion(1);
     const firstQuestion =
       typeof body.initialQuestion === "string"
         ? body.initialQuestion
@@ -75,7 +97,7 @@ export async function POST(request: Request, context: RouteContext) {
     const totalQuestions =
       sessionType === "drill"
         ? 1
-        : Number(body.totalQuestions) || questionSet.questions.length;
+        : Number(body.totalQuestions) || 13;
 
     const record: SessionRecord = {
       sessionId,
@@ -221,18 +243,16 @@ export async function POST(request: Request, context: RouteContext) {
       });
     }
 
-    const questionSet = getQuestionSet(session.questionSetId);
-    const nextQuestionMeta =
-      questionSet.questions[session.questionIndex] ?? questionSet.questions[0];
-    const nextQuestion = nextQuestionMeta.text;
+    const nextQuestionMeta = makeMockQuestion(session.questionIndex + 1);
+    const nextQuestion = nextQuestionMeta.text ?? "";
     const nextAnswerTurnId = makeId("answer");
 
     session.answerTurnId = nextAnswerTurnId;
     session.firstQuestion = nextQuestion;
     session.currentQuestionMeta = nextQuestionMeta;
     session.questionIndex += 1;
-    session.phase = nextQuestionMeta.flow;
-    session.phaseGoal = nextQuestionMeta.intent;
+    session.phase = String(nextQuestionMeta.flow ?? nextQuestionMeta.phase ?? "ice_breaking");
+    session.phaseGoal = String(nextQuestionMeta.intent ?? PHASE_GOAL);
 
     return NextResponse.json({
       answerTurnId,

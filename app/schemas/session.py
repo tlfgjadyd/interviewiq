@@ -11,16 +11,41 @@ class SessionCreate(BaseModel):
     cluster: str | None = None
     industry: str | None = None
     totalQuestions: int = Field(default=12, ge=1, le=30)
+    sessionType: Literal["full", "drill", "baseline"] = "full"
+    questionSetId: str | None = "full_13"
+    courseId: str | None = None
+    questionSetVersion: str | None = None
+    baselineId: str | None = None
+    sourceSessionId: str | None = None
+    drillId: str | None = None
+    drillTarget: str | None = None
+    maxAnswerSec: int | None = Field(default=None, gt=0)
+    initialQuestion: str | None = None
 
 
 class QuestionMeta(BaseModel):
     questionId: str
+    order: int | None = None
+    flow: str | None = None
+    phase: str | None = None
     topic: str
-    analysisFocus: str
+    title: str | None = None
+    text: str | None = None
+    intent: str | None = None
+    analysisFocus: str | list[str]
 
 
 class SessionCreateResponse(BaseModel):
     sessionId: str
+    sessionType: str | None = None
+    questionSetId: str | None = None
+    courseId: str | None = None
+    questionSetVersion: str | None = None
+    baselineId: str | None = None
+    sourceSessionId: str | None = None
+    drillId: str | None = None
+    drillTarget: str | None = None
+    maxAnswerSec: int | None = None
     answerTurnId: str
     firstQuestion: str
     firstQuestionSource: str | None = None
