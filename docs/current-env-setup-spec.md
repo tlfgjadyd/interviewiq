@@ -1,40 +1,39 @@
-# InterviewIQ Current Setup Spec
+# InterviewIQ 현재 세팅 명세서
 
-## Current Branch
+## 현재 브랜치
 
-- Branch: `integration/5-flow-backend-merge`
-- Latest setup commit: `aa413a7 Align frontend env handling`
-- Backend env file: `.env`
-- Frontend env file: `frontend/.env.local`
-- Shared examples:
+- 브랜치: `integration/5-flow-backend-merge`
+- 백엔드 환경 파일: `.env`
+- 프론트 환경 파일: `frontend/.env.local`
+- 공유용 예시 파일:
   - `.env.example`
   - `frontend/.env.example`
 
-## Completed Local Settings
+## 현재 완료된 세팅
 
 ### Redis
 
-Configured:
+현재 설정:
 
 ```env
 REDIS_URL=redis://localhost:6379
 ```
 
-Purpose:
+사용 목적:
 
-- Runtime session state
-- Vision/audio/speech chunks
-- Session document summaries
-- RAG document cache for session-specific resume/job posting text
+- 면접 런타임 세션 상태 저장
+- vision/audio/speech chunk 저장
+- 세션별 이력서/채용공고 요약 저장
+- 세션별 RAG 문서 캐시 저장
 
-Current expectation:
+현재 기준:
 
-- Redis runs locally through Docker.
-- Backend reads `REDIS_URL`.
+- Redis는 Docker로 로컬 실행한다.
+- 백엔드는 `REDIS_URL`을 읽는다.
 
-### PostgreSQL Defaults
+### PostgreSQL 기본값
 
-Configured locally:
+현재 로컬 설정:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/interviewiq
@@ -46,39 +45,40 @@ POSTGRES_DB=interviewiq
 DB_TABLE_PREFIX=ii_test_
 ```
 
-Purpose:
+사용 목적:
 
-- Google login users
-- Courses
-- Course sessions
-- DB reports
-- R2 asset metadata
+- Google 로그인 사용자 저장
+- course 저장
+- course session 저장
+- DB report 저장
+- R2 asset metadata 저장
 
-Current expectation:
+현재 기준:
 
-- PostgreSQL must be running locally with database `interviewiq`.
-- If DB is unavailable, app startup logs a warning, but DB-dependent APIs fail.
+- 로컬 PostgreSQL에 `interviewiq` DB가 있어야 한다.
+- DB가 없어도 서버 시작은 경고만 찍고 진행될 수 있다.
+- 하지만 로그인, course, asset 등 DB 의존 API는 실패한다.
 
-### Frontend Backend URL
+### 프론트 백엔드 URL
 
-Configured locally:
+현재 설정:
 
 ```env
 NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 ```
 
-Purpose:
+사용 목적:
 
-- Forces frontend to call FastAPI backend instead of internal mock API.
+- 프론트 요청을 Next mock API가 아니라 FastAPI 백엔드로 보낸다.
 
-Important:
+중요:
 
-- If this is empty, frontend falls back to mock routes.
-- Current intended flow requires this value.
+- 이 값이 비어 있으면 프론트가 내부 mock API로 요청할 수 있다.
+- 현재 실제 백엔드 연동 흐름에서는 반드시 설정되어 있어야 한다.
 
-### Frontend LLM Env Shape
+### 프론트 LLM 관련 env
 
-Configured as empty placeholders:
+현재 빈 값으로 자리만 잡아둔 설정:
 
 ```env
 OPENROUTER_API_KEY=
@@ -86,22 +86,22 @@ OPENAI_API_KEY=
 OPENAI_STT_MODEL=gpt-4o-mini-transcribe
 ```
 
-Current behavior:
+현재 동작:
 
-- Frontend build now passes even when these keys are empty.
-- `/api/openai` and `/api/whisper` return `503` at request time if `OPENROUTER_API_KEY` is missing.
+- 키가 비어 있어도 프론트 빌드는 통과한다.
+- `/api/openai`, `/api/whisper`는 실제 호출 시 `OPENROUTER_API_KEY`가 없으면 503을 반환한다.
 
-## Completed Code Setup
+## 현재 구현 완료된 기능 세팅
 
-### PDF Document Intake
+### PDF 문서 입력
 
-Added dependency:
+추가된 백엔드 의존성:
 
 ```env
 pypdf==6.4.1
 ```
 
-Backend endpoints:
+추가된 백엔드 엔드포인트:
 
 ```http
 POST /api/sessions/documents/pdf
@@ -110,49 +110,55 @@ POST /api/sessions/{sessionId}/documents
 GET  /api/sessions/{sessionId}/documents
 ```
 
-Current flow:
+현재 동작 흐름:
 
-1. Frontend uploads resume PDF and job posting PDF.
-2. Backend extracts text with `pypdf`.
-3. Frontend stores extracted text in `localStorage`.
-4. Baseline runs.
-5. Interview session starts.
-6. Frontend sends stored text to `/api/sessions/{sessionId}/documents`.
-7. Backend creates session-specific document summary and RAG documents.
+1. 프론트에서 이력서 PDF와 채용공고 PDF를 업로드한다.
+2. 백엔드가 `pypdf`로 PDF 텍스트를 추출한다.
+3. 프론트가 추출된 텍스트를 `localStorage`에 저장한다.
+4. 사용자는 baseline 화면으로 이동한다.
+5. baseline 완료 후 interview 세션이 시작된다.
+6. 프론트가 저장된 문서 텍스트를 `/api/sessions/{sessionId}/documents`로 보낸다.
+7. 백엔드가 세션별 문서 요약과 RAG 문서를 만든다.
+8. 첫 질문은 문서 기반 개인화 질문으로 교체될 수 있다.
 
-### Frontend Flow
+주의:
 
-Current route flow:
+- 텍스트 기반 PDF는 처리 가능하다.
+- 이미지 스캔 PDF는 OCR이 필요하지만, 현재 OCR은 구현되어 있지 않다.
+
+### 프론트 시작 흐름
+
+현재 라우트 흐름:
 
 ```text
-/ 
+/
 → /documents
 → /baseline
 → /interview?autoStart=1
 → /result
 ```
 
-Current first screen:
+현재 첫 화면:
 
-- One primary button: `시작하기`
-- No direct interview-start button
-- No baseline-skip branch
+- 기본 CTA는 `시작하기` 하나만 있다.
+- 기존처럼 `베이스라인 측정`과 `면접 바로가기`가 분리되어 있지 않다.
+- baseline을 건너뛰는 흐름은 제거했다.
 
-### Auth Callback
+### Google OAuth callback
 
-Added:
+추가된 프론트 파일:
 
 ```text
 frontend/app/auth/callback/page.tsx
 ```
 
-Purpose:
+역할:
 
-- Receives Google OAuth redirect query params.
-- Saves access token to localStorage.
-- Redirects to `/documents`.
+- Google OAuth redirect query param을 받는다.
+- access token을 `localStorage`에 저장한다.
+- 저장 후 `/documents`로 이동한다.
 
-Stored keys:
+저장되는 키:
 
 ```text
 interviewiq-access-token
@@ -160,34 +166,35 @@ interviewiq-token-type
 interviewiq-token-expires-in
 ```
 
-Note:
+주의:
 
-- Token storage exists.
-- Most current frontend session/document calls do not yet attach Bearer token by default.
+- callback 저장 구조는 있다.
+- 다만 현재 프론트의 세션/문서 요청은 대부분 Bearer token을 자동 첨부하지 않는다.
+- 즉 로그인 UI와 토큰 저장은 준비됐지만, 전체 API 인증 연결은 아직 완성 단계가 아니다.
 
-## Required Values Still Missing
+## 아직 필요한 설정값
 
 ### OpenAI
 
-Needed if using backend STT:
+필요한 값:
 
 ```env
 OPENAI_API_KEY=
 OPENAI_STT_MODEL=gpt-4o-mini-transcribe
 ```
 
-Used for:
+사용 목적:
 
-- Answer audio transcription
-- More reliable answer text than browser transcript fallback
+- 답변 오디오 STT
+- 브라우저 transcript보다 안정적인 answer text 확보
 
-Without it:
+없을 때:
 
-- Backend falls back to browser transcript / speech chunks when available.
+- 백엔드는 가능한 경우 browser transcript 또는 speech chunk를 fallback으로 사용한다.
 
 ### OpenRouter
 
-Needed if enabling LLM question generation:
+필요한 값:
 
 ```env
 OPENROUTER_API_KEY=
@@ -196,20 +203,21 @@ OPENROUTER_QUESTION_MODEL=openai/gpt-4o-mini
 ENABLE_LLM_QUESTION_GENERATION=true
 ```
 
-Current local setting:
+현재 로컬 설정:
 
 ```env
 ENABLE_LLM_QUESTION_GENERATION=false
 ```
 
-Behavior:
+현재 동작:
 
-- Normal questions come from backend JSON question set.
-- Deep-dive/follow-up questions use fallback unless LLM is enabled.
+- 일반 질문은 백엔드 JSON question set에서 나온다.
+- deep dive / follow-up 질문은 LLM 비활성 상태에서는 fallback 질문으로 나온다.
+- LLM 질문을 쓰려면 `ENABLE_LLM_QUESTION_GENERATION=true`와 `OPENROUTER_API_KEY`가 필요하다.
 
 ### Google OAuth
 
-Needed for real login:
+필요한 값:
 
 ```env
 GOOGLE_CLIENT_ID=
@@ -220,20 +228,20 @@ AUTH_SECRET=
 AUTH_TOKEN_TTL_SECONDS=604800
 ```
 
-Google console redirect URI must include:
+Google Console에 등록해야 하는 redirect URI:
 
 ```text
 http://localhost:8000/api/auth/google/callback
 ```
 
-Without it:
+없을 때:
 
-- Login button exists.
-- OAuth start fails with missing Google client config.
+- 로그인 버튼은 보인다.
+- 하지만 OAuth 시작 단계에서 Google client 설정 누락으로 실패한다.
 
 ### Cloudflare R2
 
-Needed for real asset upload/read URLs:
+필요한 값:
 
 ```env
 R2_ACCOUNT_ID=
@@ -243,13 +251,13 @@ R2_BUCKET=
 R2_PRESIGN_EXPIRES_SECONDS=600
 ```
 
-Used for:
+사용 목적:
 
-- Session video
-- Answer audio
-- Full audio
+- session video 업로드
+- answer audio 업로드
+- full audio 업로드
 
-Current asset types:
+현재 asset type:
 
 ```text
 session_video
@@ -257,17 +265,22 @@ answer_audio
 full_audio
 ```
 
-PDF intake does not currently use R2.
+주의:
 
-## Local Services Needed
+- PDF 입력은 현재 R2를 사용하지 않는다.
+- PDF는 백엔드로 직접 업로드해서 텍스트를 추출한다.
+
+## 로컬 실행에 필요한 서비스
 
 ### Redis
+
+새로 실행:
 
 ```powershell
 docker run -d --name interviewiq-redis -p 6379:6379 redis
 ```
 
-If already created:
+이미 만든 컨테이너 실행:
 
 ```powershell
 docker start interviewiq-redis
@@ -275,7 +288,7 @@ docker start interviewiq-redis
 
 ### PostgreSQL
 
-Expected:
+현재 env 기준:
 
 ```text
 host: localhost
@@ -285,62 +298,64 @@ password: password
 database: interviewiq
 ```
 
-Suggested Docker command:
+Docker 실행 예시:
 
 ```powershell
 docker run -d --name interviewiq-postgres -p 5432:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=password -e POSTGRES_DB=interviewiq postgres:16
 ```
 
-## Verification Commands
+## 검증 명령
 
-Backend tests:
+백엔드 테스트:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-Backend syntax:
+백엔드 문법 확인:
 
 ```powershell
 .\.venv\Scripts\python.exe -m py_compile app\api\sessions.py app\schemas\session.py
 ```
 
-Frontend build:
+프론트 빌드:
 
 ```powershell
 cd frontend
 npm.cmd run build
 ```
 
-Backend run:
+백엔드 실행:
 
 ```powershell
 uvicorn app.main:app --reload
 ```
 
-Frontend run:
+프론트 실행:
 
 ```powershell
 cd frontend
 npm.cmd run dev
 ```
 
-Health check:
+백엔드 health check:
 
 ```text
 http://localhost:8000/health
 ```
 
-Frontend:
+프론트 접속:
 
 ```text
 http://localhost:3000
 ```
 
-## Current Risk Notes
+## 현재 리스크 / 남은 작업
 
-- `.env` and `frontend/.env.local` are local-only and ignored by git.
-- DB defaults are set, but PostgreSQL must actually be running.
-- Login token is stored after callback, but current session flow is still mostly unauthenticated.
-- PDF parsing works for text-based PDFs; scanned image-only PDFs need OCR, which is not implemented.
-- LLM follow-up/deep-dive quality depends on OpenRouter key and `ENABLE_LLM_QUESTION_GENERATION=true`.
+- `.env`, `frontend/.env.local`은 gitignore 대상이라 로컬에만 반영된다.
+- PostgreSQL env는 맞췄지만 실제 DB 컨테이너 또는 로컬 DB가 떠 있어야 한다.
+- Google OAuth env가 비어 있어 실제 로그인은 아직 동작하지 않는다.
+- 로그인 토큰 저장은 되어 있지만, 모든 프론트 API 요청에 Bearer token을 붙이는 구조는 아직 완성되지 않았다.
+- R2 env가 비어 있어 asset upload/read URL 기능은 아직 동작하지 않는다.
+- PDF 파싱은 텍스트 기반 PDF만 가능하다. 이미지 스캔 PDF OCR은 미구현이다.
+- LLM 질문 생성은 현재 꺼져 있다. deep dive/follow-up 품질을 보려면 OpenRouter key와 `ENABLE_LLM_QUESTION_GENERATION=true`가 필요하다.
