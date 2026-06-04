@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -34,7 +34,7 @@ const scoreTone = (score: number) => {
   return "bg-rose-500";
 };
 
-export default function ResultPage() {
+function ResultContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("sessionId");
   const [baseline, setBaseline] = useState<BaselineRecord | null>(null);
@@ -303,5 +303,13 @@ export default function ResultPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function ResultPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResultContent />
+    </Suspense>
   );
 }

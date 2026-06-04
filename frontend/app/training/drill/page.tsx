@@ -1,12 +1,13 @@
 "use client";
 
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { InterviewRuntimeProvider } from "@/components/runtime/InterviewRuntimeProvider";
 import { DrillPlayer } from "@/components/training/DrillPlayer";
 import { getDrillFromPlan } from "@/lib/training";
 import { loadDrillPlan } from "@/lib/session-api";
 
-export default function DrillPlanPage() {
+function DrillPlanContent() {
   const searchParams = useSearchParams();
   const planId = searchParams.get("planId");
   const step = Number(searchParams.get("step") ?? "0");
@@ -28,5 +29,13 @@ export default function DrillPlanPage() {
     >
       <DrillPlayer drill={drill} planId={plan.planId} step={safeStep} />
     </InterviewRuntimeProvider>
+  );
+}
+
+export default function DrillPlanPage() {
+  return (
+    <Suspense fallback={null}>
+      <DrillPlanContent />
+    </Suspense>
   );
 }

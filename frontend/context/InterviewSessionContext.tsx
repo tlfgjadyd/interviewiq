@@ -139,6 +139,19 @@ const DEFAULT_SESSION_PAYLOAD: SessionCreatePayload = {
   industry: "semiconductor",
   totalQuestions: 12,
 };
+const DOCUMENT_STORAGE_KEY = "interviewiq-documents";
+
+type StoredDocuments = {
+  resumeText?: string;
+  jobPostingText?: string;
+  company?: string;
+  role?: string;
+};
+
+type SessionDocumentsResponse = {
+  personalizedQuestion?: string;
+  personalizedQuestionSource?: string | null;
+};
 
 const InterviewSessionContext =
   createContext<InterviewSessionContextValue | null>(null);
@@ -199,12 +212,40 @@ export const InterviewSessionProvider = ({
 
         const data = (await response.json()) as SessionCreateResponse;
 
+        let currentQuestion = data.firstQuestion;
+        const storedDocuments = readStoredDocuments();
+        if (storedDocuments?.resumeText && storedDocuments.jobPostingText) {
+          const documentResponse = await fetch(
+            `${backendBaseUrl}/api/sessions/${data.sessionId}/documents`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                resumeText: storedDocuments.resumeText,
+                jobPostingText: storedDocuments.jobPostingText,
+                company: storedDocuments.company ?? requestPayload.company,
+                role: storedDocuments.role ?? requestPayload.role,
+              }),
+            }
+          );
+          if (documentResponse.ok) {
+            const documentData =
+              (await documentResponse.json()) as SessionDocumentsResponse;
+            currentQuestion =
+              documentData.personalizedQuestion?.trim() || currentQuestion;
+          } else {
+            console.warn("[session-documents-sync-failed]", documentResponse.status);
+          }
+        }
+
         setSession({
           sessionId: data.sessionId,
           sessionType: data.sessionType ?? requestPayload.sessionType ?? "full",
           answerTurnId: data.answerTurnId,
           chunkMs: requestPayload.chunkMs,
-          currentQuestion: data.firstQuestion,
+          currentQuestion,
           currentQuestionMeta:
             data.currentQuestionMeta ?? data.currentQuestion ?? data.firstQuestionMeta,
           questionIndex: data.questionIndex,
@@ -407,6 +448,23 @@ export const InterviewSessionProvider = ({
       {children}
     </InterviewSessionContext.Provider>
   );
+};
+
+const readStoredDocuments = (): StoredDocuments | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const raw = localStorage.getItem(DOCUMENT_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as StoredDocuments;
+  } catch {
+    return null;
+  }
 };
 
 export const useInterviewSession = () => {

@@ -5,11 +5,13 @@ import tempfile
 import uuid
 import asyncio
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +51,7 @@ from app.schemas.session import (
     NextQuestionResponse,
     SessionCreate,
     SessionCreateResponse,
+    SessionDocumentsPdfResponse,
     SessionDocumentsRequest,
     SessionDocumentsResponse,
     SessionFinishResponse,
@@ -61,6 +64,7 @@ rag_retriever = RagRetriever()
 question_generator = QuestionGenerator()
 audio_transcriber = AudioTranscriber()
 TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣+#.]+")
+MAX_DOCUMENT_PDF_BYTES = 10 * 1024 * 1024
 SKILL_KEYWORDS = [
     "python",
     "java",
@@ -1776,8 +1780,61 @@ async def create_session(payload: SessionCreate):
     return await start_runtime_session(payload)
 
 
-@router.post("/{session_id}/documents", response_model=SessionDocumentsResponse)
-async def process_session_documents(session_id: str, payload: SessionDocumentsRequest):
+async def _extract_pdf_text(file: UploadFile, label: str) -> str:
+    if file.content_type not in {"application/pdf", "application/x-pdf"}:
+        raise HTTPException(status_code=400, detail=f"{label} must be a PDF file")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail=f"{label} PDF is empty")
+    if len(content) > MAX_DOCUMENT_PDF_BYTES:
+        raise HTTPException(status_code=413, detail=f"{label} PDF is larger than 10MB")
+
+    try:
+        reader = PdfReader(BytesIO(content))
+        pages = [page.extract_text() or "" for page in reader.pages]
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to parse {label} PDF") from exc
+
+    text = "\n".join(page.strip() for page in pages if page.strip()).strip()
+    if not text:
+        raise HTTPException(status_code=422, detail=f"{label} PDF has no extractable text")
+    return text
+
+
+async def _parse_document_pdfs(
+    *,
+    resume_pdf: UploadFile,
+    job_posting_pdf: UploadFile,
+    company: str | None = None,
+    role: str | None = None,
+) -> tuple[SessionDocumentsRequest, SessionDocumentsPdfResponse]:
+    resume_text, job_posting_text = await asyncio.gather(
+        _extract_pdf_text(resume_pdf, "resume"),
+        _extract_pdf_text(job_posting_pdf, "jobPosting"),
+    )
+    payload = SessionDocumentsRequest(
+        resumeText=resume_text,
+        jobPostingText=job_posting_text,
+        company=company,
+        role=role,
+    )
+    parsed = SessionDocumentsPdfResponse(
+        status="parsed",
+        resumeText=resume_text,
+        jobPostingText=job_posting_text,
+        company=company,
+        role=role,
+        resumeFileName=resume_pdf.filename,
+        jobPostingFileName=job_posting_pdf.filename,
+    )
+    return payload, parsed
+
+
+async def _process_session_documents_payload(
+    session_id: str,
+    payload: SessionDocumentsRequest,
+) -> SessionDocumentsResponse:
     meta = await _ensure_session(session_id)
     company = payload.company or meta.get("company")
     role = payload.role or meta.get("role")
@@ -1827,6 +1884,44 @@ async def process_session_documents(session_id: str, payload: SessionDocumentsRe
         personalizedQuestion=personalized_question.text,
         personalizedQuestionSource=personalized_question.source,
     )
+
+
+@router.post("/documents/pdf", response_model=SessionDocumentsPdfResponse)
+async def parse_session_document_pdfs(
+    resumePdf: UploadFile = File(...),
+    jobPostingPdf: UploadFile = File(...),
+    company: str | None = Form(default=None),
+    role: str | None = Form(default=None),
+):
+    _, parsed = await _parse_document_pdfs(
+        resume_pdf=resumePdf,
+        job_posting_pdf=jobPostingPdf,
+        company=company,
+        role=role,
+    )
+    return parsed
+
+
+@router.post("/{session_id}/documents", response_model=SessionDocumentsResponse)
+async def process_session_documents(session_id: str, payload: SessionDocumentsRequest):
+    return await _process_session_documents_payload(session_id, payload)
+
+
+@router.post("/{session_id}/documents/pdf", response_model=SessionDocumentsResponse)
+async def process_session_document_pdfs(
+    session_id: str,
+    resumePdf: UploadFile = File(...),
+    jobPostingPdf: UploadFile = File(...),
+    company: str | None = Form(default=None),
+    role: str | None = Form(default=None),
+):
+    payload, _ = await _parse_document_pdfs(
+        resume_pdf=resumePdf,
+        job_posting_pdf=jobPostingPdf,
+        company=company,
+        role=role,
+    )
+    return await _process_session_documents_payload(session_id, payload)
 
 
 @router.get("/{session_id}/documents")

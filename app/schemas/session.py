@@ -156,6 +156,16 @@ class SessionDocumentsRequest(BaseModel):
     role: str | None = None
 
 
+class SessionDocumentsPdfResponse(BaseModel):
+    status: Literal["parsed"]
+    resumeText: str
+    jobPostingText: str
+    company: str | None = None
+    role: str | None = None
+    resumeFileName: str | None = None
+    jobPostingFileName: str | None = None
+
+
 class ResumeSummary(BaseModel):
     experiences: list[str]
     skills: list[str]
