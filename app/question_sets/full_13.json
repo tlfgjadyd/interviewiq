@@ -82,7 +82,7 @@
     },
     {
       "questionId": "q08_technical_decision",
-      "order": 8,
+      "order": 9,
       "flow": "job_competency",
       "topic": "technical_knowledge",
       "title": "기술 선택 이유",
@@ -93,7 +93,7 @@
     },
     {
       "questionId": "q09_industry_fit",
-      "order": 10,
+      "order": 11,
       "flow": "job_competency",
       "topic": "industry_knowledge",
       "title": "산업 이해",
@@ -104,7 +104,7 @@
     },
     {
       "questionId": "q10_deep_tradeoff",
-      "order": 9,
+      "order": 10,
       "flow": "deep_dive",
       "topic": "technical_knowledge",
       "title": "트레이드오프 설명",
@@ -115,7 +115,7 @@
     },
     {
       "questionId": "q11_deep_failure",
-      "order": 11,
+      "order": 8,
       "flow": "deep_dive",
       "topic": "project_experience",
       "title": "실패와 개선",
