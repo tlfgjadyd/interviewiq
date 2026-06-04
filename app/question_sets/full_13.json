@@ -93,7 +93,7 @@
     },
     {
       "questionId": "q09_industry_fit",
-      "order": 9,
+      "order": 10,
       "flow": "job_competency",
       "topic": "industry_knowledge",
       "title": "산업 이해",
@@ -104,7 +104,7 @@
     },
     {
       "questionId": "q10_deep_tradeoff",
-      "order": 10,
+      "order": 9,
       "flow": "deep_dive",
       "topic": "technical_knowledge",
       "title": "트레이드오프 설명",
