@@ -1,17 +1,32 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
-  defaultHeaders: {
-    "HTTP-Referer": "http://localhost:3000",
-    "X-OpenRouter-Title": "AI Interview Coach",
-  },
-});
+const createOpenRouterClient = () => {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  return new OpenAI({
+    baseURL: "https://openrouter.ai/api/v1",
+    apiKey,
+    defaultHeaders: {
+      "HTTP-Referer": "http://localhost:3000",
+      "X-OpenRouter-Title": "AI Interview Coach",
+    },
+  });
+};
 
 export async function POST(req: Request) {
   try {
+    const openai = createOpenRouterClient();
+    if (!openai) {
+      return NextResponse.json(
+        { error: "OPENROUTER_API_KEY is not configured" },
+        { status: 503 }
+      );
+    }
+
     const { content, history, language } = await req.json();
     const isKorean = language === "ko-KR";
 
