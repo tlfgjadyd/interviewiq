@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { getBackendBaseUrl } from "@/lib/session-api";
 
 const DOCUMENT_STORAGE_KEY = "interviewiq-documents";
+const ACCESS_TOKEN_KEY = "interviewiq-access-token";
 
 type ParsedDocuments = {
   resumeText: string;
@@ -34,8 +35,18 @@ export default function DocumentsPage() {
   const [jobPostingPdf, setJobPostingPdf] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const canSubmit = Boolean(resumePdf && jobPostingPdf && company && role);
+
+  useEffect(() => {
+    if (!localStorage.getItem(ACCESS_TOKEN_KEY)) {
+      router.replace("/");
+      return;
+    }
+
+    setAuthChecked(true);
+  }, [router]);
 
   const saveDocuments = (parsed: ParsedDocuments) => {
     localStorage.setItem(
@@ -99,6 +110,14 @@ export default function DocumentsPage() {
     localStorage.removeItem(DOCUMENT_STORAGE_KEY);
     router.push("/baseline");
   };
+
+  if (!authChecked) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f5f7fb] text-sm font-semibold text-slate-600">
+        로그인 상태를 확인하고 있습니다.
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#f5f7fb] text-slate-950">
