@@ -97,7 +97,7 @@ export async function POST(request: Request, context: RouteContext) {
     const totalQuestions =
       sessionType === "drill"
         ? 1
-        : Number(body.totalQuestions) || 13;
+        : Number(body.totalQuestions) || 12;
 
     const record: SessionRecord = {
       sessionId,

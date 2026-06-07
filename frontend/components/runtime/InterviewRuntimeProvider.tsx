@@ -188,7 +188,7 @@ const InterviewRuntimeBridge = ({
 
   const startSessionPayload = useMemo<StartSessionRequest>(() => {
     const totalQuestions =
-      config.sessionType === "drill" ? 1 : config.totalQuestions ?? 13;
+      config.sessionType === "drill" ? 1 : config.totalQuestions ?? 12;
 
     return {
       sessionType: config.sessionType,
