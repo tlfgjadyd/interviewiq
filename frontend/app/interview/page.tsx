@@ -262,8 +262,8 @@ function InterviewStage() {
       : statusText;
 
   return (
-    <main className="flex h-[100dvh] overflow-hidden bg-[#f7f8fb] p-3 text-slate-950">
-      <section className="min-h-0 flex-1 overflow-hidden rounded-[26px] border border-slate-200 bg-slate-950 shadow-xl shadow-slate-200">
+    <main className="flex h-[100dvh] overflow-hidden bg-[#f7f8fb] p-0 text-slate-950">
+      <section className="min-h-0 flex-1 overflow-hidden rounded-[26px] bg-slate-950">
         <div className="relative h-full min-h-0 overflow-hidden">
           <Image
             src="/images/ai-interviewer-room.png"
