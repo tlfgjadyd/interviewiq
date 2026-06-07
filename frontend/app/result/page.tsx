@@ -774,7 +774,7 @@ function ResultContent() {
   const drillHref = useMemo(() => {
     const planId = report?.recommendedPlan.planId;
     return planId
-      ? `/training/drill?planId=${encodeURIComponent(planId)}&step=0`
+      ? `/training/goal?planId=${encodeURIComponent(planId)}`
       : null;
   }, [report]);
 

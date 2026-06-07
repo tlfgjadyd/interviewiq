@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
@@ -9,186 +10,251 @@ import {
   ClipboardCheck,
   ListChecks,
   Target,
+  TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { drillPlan, recommendedGoal } from "@/lib/training";
+import { loadDrillPlan } from "@/lib/session-api";
+import type { DrillItem, DrillPlan, DrillTarget } from "@/lib/runtime-types";
 
 const STORAGE_KEY = "interviewiq-training-plan";
 
 type StoredTrainingPlan = {
-  goalId: string;
+  planId: string;
   acceptedAt: string;
   completedDrills: number[];
 };
 
-export default function TrainingGoalPage() {
+const targetLabels: Record<string, string> = {
+  gaze_stability: "시선 안정",
+  posture: "자세 안정",
+  fidget: "반복 움직임 줄이기",
+  leg_shaking: "하체 움직임 안정",
+  answer_structure: "답변 구조화",
+  specificity: "근거 구체화",
+  job_fit: "직무 연결 강화",
+};
+
+const targetDescriptions: Record<string, string> = {
+  gaze_stability: "답변 중 시선 이탈이 많았던 구간을 줄이는 것을 목표로 합니다.",
+  posture: "답변이 길어질 때 자세가 무너지는 구간을 안정화합니다.",
+  fidget: "손이나 상체의 반복 움직임을 줄여 전달 안정감을 높입니다.",
+  leg_shaking: "심층 질문 구간에서 하체 움직임을 줄이고 답변 리듬을 유지합니다.",
+  answer_structure: "상황, 역할, 행동, 결과가 보이도록 답변 순서를 정리합니다.",
+  specificity: "결과를 수치, 비교 기준, 사용자의 영향으로 구체화합니다.",
+  job_fit: "경험을 채용공고의 핵심 역량과 직접 연결합니다.",
+};
+
+const metricLabel = (metric?: string) => {
+  if (!metric) return "분석 지표";
+  if (metric.includes("legShaking")) return "하체 움직임";
+  if (metric.includes("gaze")) return "시선 이탈";
+  if (metric.includes("posture")) return "자세 흔들림";
+  if (metric.includes("fidget")) return "반복 움직임";
+  if (metric.includes("star")) return "STAR 구조";
+  if (metric.includes("specificity")) return "구체성";
+  if (metric.includes("jobFit")) return "직무 적합성";
+  return metric;
+};
+
+const targetLabel = (target?: DrillTarget | string | null) =>
+  targetLabels[String(target ?? "")] ?? "교정 목표";
+
+function GoalSummary({ plan }: { plan: DrillPlan }) {
+  const primary = plan.drills[0];
+  const secondary = plan.drills[1];
+  const primaryTarget = primary?.target ?? "answer_structure";
+
+  return (
+    <header className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm lg:p-7">
+      <div className="flex items-center gap-2 text-sm font-bold text-violet-700">
+        <Target className="h-4 w-4" />
+        교정 목표 설정
+      </div>
+      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div>
+          <h1 className="text-2xl font-bold leading-tight text-slate-950 lg:text-3xl">
+            이번 루프는 {targetLabel(primaryTarget)}을 먼저 잡습니다.
+          </h1>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+            직전 세션의 약점 패턴을 기준으로 3개의 짧은 드릴을 진행한 뒤,
+            다음 풀세션에서 같은 지표가 얼마나 줄었는지 다시 비교합니다.
+          </p>
+        </div>
+        <div className="rounded-lg border border-violet-100 bg-violet-50 p-5">
+          <p className="text-sm font-semibold text-violet-700">핵심 목표</p>
+          <p className="mt-3 text-2xl font-bold text-violet-700">
+            {targetLabel(primaryTarget)}
+          </p>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            {targetDescriptions[String(primaryTarget)] ??
+              primary?.instruction ??
+              "직전 세션에서 가장 약했던 구간을 우선 교정합니다."}
+          </p>
+          {secondary ? (
+            <p className="mt-4 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+              다음 보조 목표: {targetLabel(secondary.target)}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function DrillCard({ drill, index }: { drill: DrillItem; index: number }) {
+  const metric = drill.passCriteria;
+
+  return (
+    <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold text-violet-600">Drill {index + 1}</p>
+          <h3 className="mt-1 text-base font-bold text-slate-950">
+            {drill.title || targetLabel(drill.target)}
+          </h3>
+        </div>
+        <span className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+          {targetLabel(drill.target)}
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-600">
+        {drill.instruction}
+      </p>
+      <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+        <p className="font-semibold text-slate-800">{drill.question}</p>
+        <p className="mt-2 text-xs font-medium text-slate-500">
+          통과 기준: {metricLabel(metric?.metric)} {metric?.operator}{" "}
+          {String(metric?.threshold ?? "-")}
+        </p>
+      </div>
+    </article>
+  );
+}
+
+function TrainingGoalContent() {
+  const searchParams = useSearchParams();
+  const planId = searchParams.get("planId");
+  const plan = useMemo(() => loadDrillPlan(planId), [planId]);
   const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      setIsSaved(true);
+    if (!raw) return;
+    try {
+      const stored = JSON.parse(raw) as StoredTrainingPlan;
+      setIsSaved(stored.planId === plan.planId);
+    } catch {
+      setIsSaved(false);
     }
-  }, []);
+  }, [plan.planId]);
 
   const acceptGoal = () => {
-    const plan: StoredTrainingPlan = {
-      goalId: recommendedGoal.id,
+    const stored: StoredTrainingPlan = {
+      planId: plan.planId,
       acceptedAt: new Date().toISOString(),
       completedDrills: [],
     };
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(plan));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     setIsSaved(true);
   };
 
+  const drillHref = `/training/drill?planId=${encodeURIComponent(
+    plan.planId
+  )}&step=0`;
+  const resultHref = plan.sourceSessionId
+    ? `/result?sessionId=${encodeURIComponent(plan.sourceSessionId)}`
+    : "/result";
+
   return (
-    <main className="min-h-screen bg-[#f5f7fb] text-slate-950">
-      <div className="mx-auto max-w-6xl px-5 py-6 lg:px-8">
-        <nav className="flex items-center justify-between">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/result">
-              <ArrowLeft className="h-4 w-4" />
-              결과로 돌아가기
+    <main className="min-h-screen bg-[#f8fafc] text-slate-950">
+      <div className="mx-auto max-w-[1320px] px-5 py-4 lg:px-6">
+        <nav className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Button asChild variant="ghost" size="icon">
+              <Link href={resultHref}>
+                <ArrowLeft className="h-5 w-5" />
+              </Link>
+            </Button>
+            <div className="rounded-lg bg-white px-5 py-3 text-sm font-bold shadow-sm">
+              교정 목표 설정
+            </div>
+          </div>
+          <Button asChild className="bg-violet-600 hover:bg-violet-700">
+            <Link href={drillHref}>
+              드릴 시작
+              <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
-          <div className="text-sm font-medium text-slate-500">Loop 1</div>
         </nav>
 
-        <header className="mt-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm lg:p-8">
-          <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
-            <Target className="h-4 w-4" />
-            목표 설정
-          </div>
-          <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_300px]">
-            <div>
-              <h1 className="text-2xl font-semibold leading-tight lg:text-3xl">
-                이번 루프에서는 하나의 약점만 끝까지 잡습니다.
-              </h1>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                드릴 3회는 모두 같은 목표를 다른 난이도로 반복합니다. 목표가
-                좁을수록 중간 풀세션에서 개선 여부를 명확히 확인할 수 있습니다.
-              </p>
-            </div>
-            <div className="rounded-lg bg-slate-950 p-5 text-white">
-              <p className="text-sm text-slate-300">목표 점수</p>
-              <div className="mt-3 flex items-center justify-between">
-                <span className="font-mono text-3xl">
-                  {recommendedGoal.baselineScore}
-                </span>
-                <ArrowRight className="h-4 w-4 text-slate-500" />
-                <span className="font-mono text-3xl text-blue-300">
-                  {recommendedGoal.targetScore}
-                </span>
-              </div>
-            </div>
-          </div>
-        </header>
+        <section className="mt-4">
+          <GoalSummary plan={plan} />
+        </section>
 
-        <section className="mt-5 grid gap-5 lg:grid-cols-[1fr_360px]">
-          <div className="space-y-5">
-            <section className="rounded-lg border border-blue-200 bg-blue-50 p-5">
-              <p className="text-sm font-semibold text-blue-700">
-                추천 목표
-              </p>
-              <h2 className="mt-2 text-xl font-semibold">
-                {recommendedGoal.title}
-              </h2>
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <div className="rounded-lg bg-white p-4">
-                  <h3 className="font-semibold">왜 이 목표인가</h3>
-                  <div className="mt-3 space-y-2">
-                    {recommendedGoal.evidence.map((item) => (
-                      <p key={item} className="text-sm leading-6 text-slate-600">
-                        {item}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-                <div className="rounded-lg bg-white p-4">
-                  <h3 className="font-semibold">통과 기준</h3>
-                  <div className="mt-3 space-y-2">
-                    {recommendedGoal.successCriteria.map((item) => (
-                      <p
-                        key={item}
-                        className="flex gap-2 text-sm leading-6 text-slate-600"
-                      >
-                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                        {item}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </section>
+        <section className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-2">
+              <ListChecks className="h-5 w-5 text-violet-600" />
+              <h2 className="text-lg font-bold">추천 드릴 3개</h2>
+            </div>
+            <div className="mt-4 grid gap-3">
+              {plan.drills.map((drill, index) => (
+                <DrillCard key={drill.drillId} drill={drill} index={index} />
+              ))}
+            </div>
+          </section>
 
+          <aside className="space-y-4">
             <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center gap-2">
-                <ListChecks className="h-5 w-5 text-blue-600" />
-                <h2 className="text-lg font-semibold">생성될 드릴</h2>
+                <ClipboardCheck className="h-5 w-5 text-violet-600" />
+                <h2 className="text-base font-bold">진행 방식</h2>
               </div>
               <div className="mt-4 space-y-3">
-                {drillPlan.map((drill) => (
-                  <article
-                    key={drill.id}
-                    className="grid gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-[120px_1fr_90px]"
-                  >
-                    <div>
-                      <p className="text-xs font-semibold text-blue-700">
-                        Drill {drill.drillIndex}
-                      </p>
-                      <p className="mt-1 text-sm font-medium">{drill.title}</p>
-                    </div>
-                    <p className="text-sm leading-6 text-slate-600">
-                      {drill.question}
-                    </p>
-                    <p className="text-sm font-medium text-slate-500 md:text-right">
-                      {drill.durationMinutes}분
-                    </p>
-                  </article>
+                {[
+                  "드릴 1개는 독립 drill session으로 저장됩니다.",
+                  "각 드릴 결과는 다음 목표 재산정에 사용됩니다.",
+                  "드릴 3개 후 풀세션을 다시 진행해 개선률을 확인합니다.",
+                ].map((item) => (
+                  <p key={item} className="flex gap-3 text-sm leading-6 text-slate-600">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                    {item}
+                  </p>
                 ))}
               </div>
-            </section>
-          </div>
-
-          <aside className="space-y-5">
-            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2">
-                <ClipboardCheck className="h-5 w-5 text-blue-600" />
-                <h2 className="text-base font-semibold">목표 확정</h2>
-              </div>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                확정하면 로컬에 드릴 진행 상태가 저장됩니다. 백엔드의
-                training plan API가 붙으면 같은 위치를 서버 저장으로 교체하면
-                됩니다.
-              </p>
 
               <Button
                 type="button"
                 onClick={acceptGoal}
-                className="mt-5 w-full bg-blue-600 hover:bg-blue-700"
+                variant="outline"
+                className="mt-5 h-11 w-full border-violet-200 text-violet-700 hover:bg-violet-50"
               >
-                {isSaved ? "목표 확정됨" : "추천 목표 확정"}
+                {isSaved ? "목표 저장됨" : "이 목표로 진행"}
               </Button>
+            </section>
 
-              <Button
-                asChild
-                variant={isSaved ? "default" : "outline"}
-                className={
-                  isSaved
-                    ? "mt-3 w-full bg-slate-950 hover:bg-slate-800"
-                    : "mt-3 w-full"
-                }
-              >
-                <Link href="/training/drill/1">
-                  Drill 1 시작
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-violet-600" />
+                <h2 className="text-base font-bold">비교 기준</h2>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                결과 리포트의 질문별 이벤트와 지표를 기준으로 같은 target의
+                변화량을 비교합니다. 영상이 pending이어도 그래프와 드릴 목표는
+                저장된 분석값으로 확인할 수 있습니다.
+              </p>
             </section>
           </aside>
         </section>
       </div>
     </main>
+  );
+}
+
+export default function TrainingGoalPage() {
+  return (
+    <Suspense fallback={null}>
+      <TrainingGoalContent />
+    </Suspense>
   );
 }
