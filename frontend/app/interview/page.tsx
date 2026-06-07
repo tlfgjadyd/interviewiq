@@ -263,7 +263,7 @@ function InterviewStage() {
 
   return (
     <main className="flex h-[100dvh] overflow-hidden bg-[#f7f8fb] p-0 text-slate-950">
-      <section className="min-h-0 flex-1 overflow-hidden rounded-[26px] bg-slate-950">
+      <section className="min-h-0 flex-1 overflow-hidden bg-slate-950">
         <div className="relative h-full min-h-0 overflow-hidden">
           <Image
             src="/images/ai-interviewer-room.png"
@@ -275,11 +275,7 @@ function InterviewStage() {
           <div className="absolute inset-0 bg-slate-950/22" />
 
           <div
-            className="absolute left-1/2 top-1/2 overflow-hidden -translate-x-1/2 -translate-y-1/2"
-            style={{
-              width: "min(100%, calc((100dvh - 40px) * 1.777))",
-              height: "min(100%, calc((100dvw - 40px) / 1.777))",
-            }}
+            className="absolute inset-0 overflow-hidden"
           >
             <Image
               src="/images/ai-interviewer-room.png"
