@@ -285,6 +285,18 @@ function TimelineGraph({
   const unstableSegment =
     segments.find((segment) => segment.severity === "high") ??
     segments.find((segment) => segment.severity === "medium");
+  const questionMarkers = questions.map((question, index) => {
+    const t0 = index * QUESTION_DURATION_MS;
+    const t1 = Math.min((index + 1) * QUESTION_DURATION_MS, durationMs);
+    const center = (t0 + t1) / 2;
+    return {
+      question,
+      index,
+      left: clamp((center / durationMs) * 100),
+      startLeft: clamp((t0 / durationMs) * 100),
+      width: Math.max(1, ((t1 - t0) / durationMs) * 100),
+    };
+  });
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -294,18 +306,19 @@ function TimelineGraph({
       </div>
 
       <div className="mt-5 overflow-hidden rounded-lg border border-slate-100 bg-slate-50">
-        <div className="grid grid-cols-5 text-center text-xs font-semibold">
-          {questions.map((question, index) => (
+        <div className="relative h-16 border-b border-slate-100 text-center text-xs font-semibold">
+          {questionMarkers.map(({ question, index, startLeft, width }) => (
             <button
               key={`${question.answerTurnId ?? question.questionId ?? index}-question-band`}
               type="button"
               onClick={() => onSeek(index * QUESTION_DURATION_MS)}
-              className={`border-r border-slate-200 px-3 py-3 last:border-r-0 ${
+              className={`absolute top-0 h-full border-r border-slate-200 px-2 py-2 text-left ${
                 index % 3 === 2 ? "bg-rose-50 text-rose-600" : index % 3 === 0 ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
               }`}
+              style={{ left: `${startLeft}%`, width: `${width}%` }}
             >
               Q{question.questionIndex ?? index + 1}
-              <span className="ml-1 hidden sm:inline">
+              <span className="ml-1 hidden xl:inline">
                 {question.topic ? String(question.topic) : "질문"}
               </span>
               <span className="block pt-1 font-mono text-[11px] font-medium">
@@ -420,6 +433,19 @@ function TimelineGraph({
                   />
                 );
               })}
+            </div>
+            <div className="relative mt-3 h-6 font-mono text-[11px] font-semibold text-slate-500">
+              {questionMarkers.map(({ question, index, left }) => (
+                <button
+                  key={`${question.answerTurnId ?? question.questionId ?? index}-x-label`}
+                  type="button"
+                  onClick={() => onSeek(index * QUESTION_DURATION_MS)}
+                  className="absolute top-0 -translate-x-1/2 rounded px-1 py-0.5 hover:bg-slate-100 hover:text-violet-700"
+                  style={{ left: `${left}%` }}
+                >
+                  Q{question.questionIndex ?? index + 1}
+                </button>
+              ))}
             </div>
             <div className="mt-2 flex justify-between font-mono text-xs text-slate-500">
               <span>00:00</span>

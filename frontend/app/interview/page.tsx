@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2, Maximize2, Square } from "lucide-react";
 
-const totalQuestions = 13;
+const totalQuestions = 12;
 const PREP_SECONDS = 30;
 const ANSWER_SECONDS = 90;
 const RESULT_DELAY_MS = 1800;
