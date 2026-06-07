@@ -2,21 +2,46 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Camera from "@/components/Camera/Camera";
 import {
   InterviewRuntimeProvider,
   useInterviewRuntime,
 } from "@/components/runtime/InterviewRuntimeProvider";
 import { Button } from "@/components/ui/button";
-import { Maximize2, Square } from "lucide-react";
+import { CheckCircle2, Loader2, Maximize2, Square } from "lucide-react";
 
 const totalQuestions = 13;
+const PREP_SECONDS = 30;
+const ANSWER_SECONDS = 90;
+const RESULT_DELAY_MS = 1800;
+const SILENCE_TRIGGER_MS = 5000;
+const SILENCE_COUNTDOWN_SECONDS = 10;
+
+type FlowState =
+  | "starting"
+  | "preparing"
+  | "answering"
+  | "submitting"
+  | "completed";
+
+const formatTime = (seconds: number) => {
+  const minute = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const second = String(seconds % 60).padStart(2, "0");
+  return `${minute}:${second}`;
+};
 
 function InterviewStage() {
   const router = useRouter();
-  const didAutoStartRef = useRef(false);
+  const didStartRef = useRef(false);
   const didNavigateToResultRef = useRef(false);
+  const activeTurnRef = useRef<string | null>(null);
+  const silenceStartedAtRef = useRef<number | null>(null);
+  const [flowState, setFlowState] = useState<FlowState>("starting");
+  const [prepRemaining, setPrepRemaining] = useState(PREP_SECONDS);
+  const [silenceCountdown, setSilenceCountdown] = useState<number | null>(null);
+  const [submitMessage, setSubmitMessage] = useState("답변을 정리하고 있습니다.");
+
   const {
     session,
     isSessionActive,
@@ -29,26 +54,165 @@ function InterviewStage() {
 
   const waveformBars = useMemo(
     () =>
-      Array.from({ length: 44 }).map(
+      Array.from({ length: 34 }).map(
         (_, index) =>
-          8 + Math.abs(Math.sin(index * 0.72)) * 24 + (index % 6) * 1.5
+          7 + Math.abs(Math.sin(index * 0.72)) * 22 + (index % 6) * 1.2
       ),
     []
   );
 
   useEffect(() => {
-    if (didAutoStartRef.current || session) {
+    if (didStartRef.current) {
       return;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("autoStart") !== "1") {
+    didStartRef.current = true;
+    startSession().catch((error) => {
+      console.warn("[interview-auto-start-failed]", error);
+    });
+  }, [startSession]);
+
+  useEffect(() => {
+    if (!session || session.status !== "active") {
       return;
     }
 
-    didAutoStartRef.current = true;
-    startSession();
-  }, [session, startSession]);
+    const answerTurnId = session.answerTurnId ?? null;
+    if (activeTurnRef.current === answerTurnId) {
+      return;
+    }
+
+    activeTurnRef.current = answerTurnId;
+    silenceStartedAtRef.current = null;
+    setSilenceCountdown(null);
+    setPrepRemaining(PREP_SECONDS);
+    setSubmitMessage("답변을 정리하고 있습니다.");
+    setFlowState("preparing");
+  }, [session]);
+
+  useEffect(() => {
+    if (flowState !== "preparing" || !session || session.status !== "active") {
+      return;
+    }
+
+    if (prepRemaining <= 0) {
+      startAnswer();
+      setFlowState("answering");
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setPrepRemaining((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [flowState, prepRemaining, session, startAnswer]);
+
+  const submitCurrentAnswer = useCallback(
+    (reason: "time_limit" | "manual" | "silence") => {
+      if (!session || flowState === "submitting" || flowState === "completed") {
+        return;
+      }
+
+      setFlowState("submitting");
+      setSilenceCountdown(null);
+      setSubmitMessage(
+        reason === "silence"
+          ? "침묵 시간이 길어 답변을 종료했습니다. 다음 질문을 준비하고 있습니다."
+          : reason === "time_limit"
+          ? "답변 시간이 종료되었습니다. 다음 질문을 준비하고 있습니다."
+          : "답변을 종료했습니다. 다음 질문을 준비하고 있습니다."
+      );
+
+      void endAnswer(reason === "silence" ? "silence" : "button")
+        .then(() => {
+          const questionIndex = session.questionIndex ?? 1;
+          const totalQuestionCount = session.totalQuestions ?? totalQuestions;
+
+          if (questionIndex >= totalQuestionCount) {
+            setSubmitMessage("면접 결과를 정리하고 있습니다.");
+            setFlowState("completed");
+            window.setTimeout(() => {
+              if (didNavigateToResultRef.current) return;
+              didNavigateToResultRef.current = true;
+              router.replace(
+                `/result?sessionId=${encodeURIComponent(session.sessionId)}`
+              );
+            }, RESULT_DELAY_MS);
+          }
+        })
+        .catch((error) => {
+          console.warn("[interview-submit-answer-failed]", error);
+          setFlowState("answering");
+        });
+    },
+    [endAnswer, flowState, router, session]
+  );
+
+  useEffect(() => {
+    if (flowState !== "answering" || !answerState.isRecording) {
+      return;
+    }
+
+    if ((answerState.elapsedSec ?? 0) >= ANSWER_SECONDS) {
+      submitCurrentAnswer("time_limit");
+    }
+  }, [
+    answerState.elapsedSec,
+    answerState.isRecording,
+    flowState,
+    submitCurrentAnswer,
+  ]);
+
+  useEffect(() => {
+    if (flowState !== "answering" || !answerState.isRecording) {
+      silenceStartedAtRef.current = null;
+      setSilenceCountdown(null);
+      return;
+    }
+
+    const isSpeaking =
+      (answerState.isSpeakingRatio ?? 1) >= 0.2 ||
+      (answerState.rmsVolume ?? 0.02) >= 0.018;
+
+    if (isSpeaking) {
+      silenceStartedAtRef.current = null;
+      setSilenceCountdown(null);
+      return;
+    }
+
+    const now = performance.now();
+    if (silenceStartedAtRef.current === null) {
+      silenceStartedAtRef.current = now;
+      setSilenceCountdown(null);
+      return;
+    }
+
+    const silentMs = now - silenceStartedAtRef.current;
+    if (silentMs < SILENCE_TRIGGER_MS) {
+      setSilenceCountdown(null);
+      return;
+    }
+
+    const elapsedCountdownSec = Math.floor(
+      (silentMs - SILENCE_TRIGGER_MS) / 1000
+    );
+    const remaining = Math.max(
+      0,
+      SILENCE_COUNTDOWN_SECONDS - elapsedCountdownSec
+    );
+    setSilenceCountdown(remaining);
+
+    if (remaining <= 0) {
+      submitCurrentAnswer("silence");
+    }
+  }, [
+    answerState.isRecording,
+    answerState.isSpeakingRatio,
+    answerState.rmsVolume,
+    flowState,
+    submitCurrentAnswer,
+  ]);
 
   useEffect(() => {
     if (
@@ -59,25 +223,46 @@ function InterviewStage() {
       return;
     }
 
+    setFlowState("completed");
     didNavigateToResultRef.current = true;
-    router.replace(`/result?sessionId=${encodeURIComponent(session.sessionId)}`);
+    window.setTimeout(() => {
+      router.replace(`/result?sessionId=${encodeURIComponent(session.sessionId)}`);
+    }, RESULT_DELAY_MS);
   }, [router, session]);
 
-  const handleAnswerButton = async () => {
-    if (!session) {
+  const handleManualEnd = () => {
+    if (flowState !== "answering" || !answerState.isRecording) {
       return;
     }
 
-    if (answerState.isRecording) {
-      await endAnswer();
-      return;
-    }
-
-    startAnswer();
+    submitCurrentAnswer("manual");
   };
 
+  const questionIndex = session?.questionIndex ?? 1;
+  const totalQuestionCount = session?.totalQuestions ?? totalQuestions;
+  const remainingAnswerSec = Math.max(
+    0,
+    ANSWER_SECONDS - (answerState.elapsedSec ?? 0)
+  );
+  const statusText =
+    flowState === "preparing"
+      ? "준비 시간"
+      : flowState === "answering"
+      ? "남은 답변 시간"
+      : flowState === "submitting"
+      ? "분석 중"
+      : flowState === "completed"
+      ? "면접 종료"
+      : "세션 준비";
+  const timerText =
+    flowState === "preparing"
+      ? formatTime(prepRemaining)
+      : flowState === "answering"
+      ? formatTime(remainingAnswerSec)
+      : statusText;
+
   return (
-    <main className="flex h-[100dvh] overflow-hidden bg-[#f7f8fb] p-5 text-slate-950">
+    <main className="flex h-[100dvh] overflow-hidden bg-[#f7f8fb] p-3 text-slate-950">
       <section className="min-h-0 flex-1 overflow-hidden rounded-[26px] border border-slate-200 bg-slate-950 shadow-xl shadow-slate-200">
         <div className="relative h-full min-h-0 overflow-hidden">
           <Image
@@ -126,31 +311,67 @@ function InterviewStage() {
 
             <div className="absolute left-[4.8%] top-[40%] z-10 max-w-[37%] -translate-y-1/2 text-white">
               <p className="text-[clamp(18px,1.5vw,28px)] font-bold text-blue-300">
-                질문
+                질문 {questionIndex}/{totalQuestionCount}
               </p>
               <h1 className="mt-5 break-keep text-[clamp(42px,4.8vw,88px)] font-bold leading-[1.08] tracking-normal drop-shadow-md">
                 {currentQuestion}
               </h1>
             </div>
 
-            <div className="absolute bottom-[5.8%] left-1/2 z-20 flex w-[clamp(520px,50%,700px)] max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-5 rounded-2xl border border-white/18 bg-slate-950/34 px-5 py-3 text-white shadow-2xl shadow-black/20 backdrop-blur-md">
-              <div className="min-w-[145px]">
-                <p className="text-base font-bold">
-                  {answerState.isRecording ? "답변 중" : "답변 대기"}
-                  <span className="ml-2 text-sm font-medium text-white/65">
-                    최대 {answerState.maxAnswerSec}초
-                  </span>
+            {(flowState === "submitting" || flowState === "completed") && (
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/54 text-white backdrop-blur-sm">
+                <div className="max-w-lg rounded-2xl border border-white/15 bg-slate-950/72 px-8 py-7 text-center shadow-2xl">
+                  {flowState === "completed" ? (
+                    <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-300" />
+                  ) : (
+                    <Loader2 className="mx-auto h-10 w-10 animate-spin text-blue-300" />
+                  )}
+                  <h2 className="mt-4 text-2xl font-bold">
+                    {flowState === "completed"
+                      ? "면접이 종료되었습니다"
+                      : "답변이 종료되었습니다"}
+                  </h2>
+                  <p className="mt-3 text-sm leading-6 text-white/75">
+                    {flowState === "completed"
+                      ? "고생하셨습니다. 결과 리포트로 이동합니다."
+                      : submitMessage}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {flowState === "answering" && silenceCountdown !== null && (
+              <div className="absolute left-1/2 top-[10%] z-30 w-[min(560px,calc(100%-32px))] -translate-x-1/2 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-slate-950 shadow-2xl">
+                <p className="text-sm font-semibold text-amber-700">
+                  침묵 시간이 길어지고 있습니다
+                </p>
+                <p className="mt-1 text-sm text-slate-700">
+                  {silenceCountdown}초 안에 답변이 이어지지 않으면 자동으로 종료됩니다.
+                </p>
+              </div>
+            )}
+
+            <div className="absolute bottom-[5.8%] left-1/2 z-20 flex w-[clamp(500px,46%,660px)] max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-4 rounded-[18px] border border-white/14 bg-[#111827]/88 px-4 py-3 text-white shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur-sm">
+              <div className="min-w-[126px]">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/52">
+                  {statusText}
+                </p>
+                <p className="mt-0.5 font-mono text-2xl font-bold tabular-nums leading-none text-white">
+                  {timerText}
                 </p>
               </div>
 
-              <div className="flex h-10 flex-1 items-end justify-center gap-1 overflow-hidden">
+              <div className="flex h-9 flex-1 items-end justify-center gap-1 overflow-hidden rounded-full bg-white/[0.06] px-3 pb-1.5">
                 {waveformBars.map((height, index) => (
                   <span
                     key={index}
-                    className="w-1 rounded-full bg-blue-400"
+                    className="w-1 rounded-full bg-sky-300"
                     style={{
-                      height: `${Math.min(height, 30)}px`,
-                      opacity: index % 4 === 0 ? 0.55 : 1,
+                      height: `${Math.min(height, 24)}px`,
+                      opacity:
+                        flowState === "answering" && index % 4 !== 0
+                          ? 0.92
+                          : 0.32,
                     }}
                   />
                 ))}
@@ -158,12 +379,12 @@ function InterviewStage() {
 
               <Button
                 type="button"
-                onClick={handleAnswerButton}
-                disabled={!session}
-                className="h-11 min-w-[124px] rounded-xl bg-blue-600 px-5 text-base font-bold text-white hover:bg-blue-700 disabled:bg-blue-500/70"
+                onClick={handleManualEnd}
+                disabled={flowState !== "answering" || !answerState.isRecording}
+                className="h-10 min-w-[104px] rounded-xl bg-white px-4 text-sm font-bold text-slate-950 shadow-sm hover:bg-slate-100 disabled:bg-white/45 disabled:text-slate-500"
               >
-                <Square className="h-3.5 w-3.5 fill-white text-white" />
-                {answerState.isRecording ? "답변 종료" : "답변 시작"}
+                <Square className="h-3 w-3 fill-current text-current" />
+                종료
               </Button>
             </div>
 
@@ -181,7 +402,7 @@ export default function InterviewPage() {
       config={{
         sessionType: "full",
         questionSetId: "full_13",
-        maxAnswerSec: 90,
+        maxAnswerSec: ANSWER_SECONDS,
         totalQuestions,
       }}
     >

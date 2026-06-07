@@ -36,6 +36,11 @@ class User(Base):
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="user", cascade="all, delete-orphan")
     assets = relationship("Asset", back_populates="user", cascade="all, delete-orphan")
+    correction_loops = relationship(
+        "CorrectionLoop",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class Document(Base):
@@ -91,6 +96,11 @@ class Course(Base):
     sessions = relationship("Session", back_populates="course", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="course", cascade="all, delete-orphan")
     assets = relationship("Asset", back_populates="course", cascade="all, delete-orphan")
+    correction_loops = relationship(
+        "CorrectionLoop",
+        back_populates="course",
+        cascade="all, delete-orphan",
+    )
 
 
 class Session(Base):
@@ -158,6 +168,48 @@ class Report(Base):
     course = relationship("Course", back_populates="reports")
     session = relationship("Session", back_populates="reports")
     user = relationship("User", back_populates="reports")
+    correction_loops = relationship("CorrectionLoop", back_populates="source_report")
+
+
+class CorrectionLoop(Base):
+    __tablename__ = table_name("correction_loops")
+
+    id = Column(String, primary_key=True)
+    course_id = Column(
+        String,
+        ForeignKey(f"{Course.__tablename__}.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = Column(String, ForeignKey(f"{User.__tablename__}.id", ondelete="CASCADE"), nullable=False)
+    source_session_id = Column(
+        String,
+        ForeignKey(f"{Session.__tablename__}.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_report_id = Column(
+        String,
+        ForeignKey(f"{Report.__tablename__}.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    loop_index = Column(Integer, default=1, nullable=False)
+    status = Column(String, default="planned", nullable=False)
+    goals = Column(JSON, default=list, nullable=False)
+    drills = Column(JSON, default=list, nullable=False)
+    plan = Column(JSON, default=dict, nullable=False)
+    results = Column(JSON, default=list, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    course = relationship("Course", back_populates="correction_loops")
+    user = relationship("User", back_populates="correction_loops")
+    source_session = relationship("Session")
+    source_report = relationship("Report", back_populates="correction_loops")
 
 
 class Asset(Base):

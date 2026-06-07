@@ -42,7 +42,9 @@ type InterviewRuntimeContextValue = {
   startSessionPayload: StartSessionRequest;
   startSession: () => Promise<void>;
   startAnswer: () => void;
-  endAnswer: () => Promise<DrillSessionResult | null>;
+  endAnswer: (
+    endedBy?: "voice_command" | "silence" | "button" | "keyboard" | "manual"
+  ) => Promise<DrillSessionResult | null>;
   finishSession: () => Promise<void>;
 };
 
@@ -144,6 +146,7 @@ const InterviewRuntimeBridge = ({
   const {
     session,
     latestVision,
+    latestAudioSignal,
     isAnswerRecording,
     startSession: startBaseSession,
     finishAnswer,
@@ -197,6 +200,7 @@ const InterviewRuntimeBridge = ({
       baselineId: config.baselineId,
       sourceSessionId:
         config.sessionType === "drill" ? config.sourceSessionId : undefined,
+      drillIndex: config.sessionType === "drill" ? config.drillIndex : undefined,
       drillId: config.sessionType === "drill" ? config.drillId : undefined,
       drillTarget:
         config.sessionType === "drill" ? config.drillTarget : undefined,
@@ -269,7 +273,10 @@ const InterviewRuntimeBridge = ({
     setAnswerRecording(true);
   }, [setAnswerRecording, stopBrowserSpeechRecognition]);
 
-  const endAnswer = useCallback(async () => {
+  const endAnswer = useCallback(async (
+    endedBy: "voice_command" | "silence" | "button" | "keyboard" | "manual" =
+      "button"
+  ) => {
     const finishedAnswerTurnId = session?.answerTurnId;
     const finishedQuestion = session?.currentQuestionMeta;
     const browserTranscript = latestTranscriptRef.current.trim();
@@ -279,7 +286,7 @@ const InterviewRuntimeBridge = ({
       answerTurnId: session?.answerTurnId,
       browserTranscriptLength: browserTranscript.length,
     });
-    const finishResult = await finishAnswer("button", null, {
+    const finishResult = await finishAnswer(endedBy, null, {
       browserTranscript,
       language: "ko-KR",
     });
@@ -335,6 +342,9 @@ const InterviewRuntimeBridge = ({
       sessionId: session.sessionId,
       sessionType: session.sessionType ?? config.sessionType,
       status: session.status ?? "active",
+      answerTurnId: session.answerTurnId,
+      questionIndex: session.questionIndex,
+      totalQuestions: session.totalQuestions,
       courseId: session.courseId ?? config.courseId,
       questionSetId: session.questionSetId ?? startSessionPayload.questionSetId,
       baselineId: session.baselineId ?? config.baselineId,
@@ -393,6 +403,9 @@ const InterviewRuntimeBridge = ({
         isRecording: isAnswerRecording,
         elapsedSec,
         maxAnswerSec: config.maxAnswerSec,
+        isSpeakingRatio: latestAudioSignal?.isSpeakingRatio,
+        silenceDurationMs: latestAudioSignal?.silenceDurationMs,
+        rmsVolume: latestAudioSignal?.rmsVolume,
       },
       metrics,
       drillResults,
@@ -412,6 +425,7 @@ const InterviewRuntimeBridge = ({
       endAnswer,
       finishSession,
       isAnswerRecording,
+      latestAudioSignal,
       metrics,
       runtimeSession,
       session,

@@ -4,20 +4,32 @@ import type {
   DrillPlan,
   InterviewReport,
   InterviewReportQuestion,
-  InterviewWeakPattern,
+  ReportComparison,
 } from "@/lib/runtime-types";
-import { fallbackDrillPlan, fallbackReport } from "@/lib/training";
+import { fallbackDrillPlan } from "@/lib/training";
 
 const PLAN_STORAGE_PREFIX = "interviewiq-drill-plan:";
+const ACCESS_TOKEN_KEY = "interviewiq-access-token";
 
 export const getBackendBaseUrl = () =>
   process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") ?? "";
+
+export const getAccessToken = () =>
+  typeof window === "undefined" ? null : localStorage.getItem(ACCESS_TOKEN_KEY);
+
+export const authHeaders = (extra?: HeadersInit): HeadersInit => {
+  const token = getAccessToken();
+  return {
+    ...(extra ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
 
 export const getReport = async (
   sessionId: string | null
 ): Promise<InterviewReport> => {
   if (!sessionId) {
-    return fallbackReport;
+    throw new Error("sessionId is required");
   }
 
   const backendBaseUrl = getBackendBaseUrl();
@@ -25,131 +37,184 @@ export const getReport = async (
     ? `${backendBaseUrl}/api/sessions/${sessionId}/report`
     : `/api/reports/${sessionId}`;
 
-  try {
-    const response = await fetch(url, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`Failed to load report: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const report = data.report ?? data;
-    return normalizeReport(report, sessionId);
-  } catch {
-    return {
-      ...fallbackReport,
-      sessionId,
-      recommendedPlan: {
-        ...fallbackReport.recommendedPlan,
-        sourceSessionId: sessionId,
-      },
-    };
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to load report: ${response.status}`);
   }
+
+  const data = await response.json();
+  return normalizeReport(data.report ?? data, sessionId);
+};
+
+export type SessionAsset = {
+  id: string;
+  assetType: string;
+  status: string;
+  mimeType?: string | null;
+  objectKey: string;
+};
+
+export const getSessionAssets = async (sessionId: string): Promise<SessionAsset[]> => {
+  const backendBaseUrl = getBackendBaseUrl();
+  if (!backendBaseUrl) {
+    return [];
+  }
+
+  const response = await fetch(`${backendBaseUrl}/api/sessions/${sessionId}/assets`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    return [];
+  }
+
+  const data = await response.json();
+  return Array.isArray(data.assets) ? data.assets : [];
+};
+
+export const getAssetReadUrl = async (
+  sessionId: string,
+  assetId: string
+): Promise<string | null> => {
+  const backendBaseUrl = getBackendBaseUrl();
+  if (!backendBaseUrl) {
+    return null;
+  }
+
+  const response = await fetch(
+    `${backendBaseUrl}/api/sessions/${sessionId}/assets/${assetId}/read-url`,
+    {
+      cache: "no-store",
+      headers: authHeaders(),
+    }
+  );
+  if (!response.ok) {
+    return null;
+  }
+
+  const data = await response.json();
+  return typeof data.readUrl === "string" ? data.readUrl : null;
+};
+
+export type CourseReportResponse = {
+  id: string;
+  courseId: string;
+  sessionId?: string | null;
+  reportType: string;
+  summary?: string | null;
+  metrics: Record<string, unknown>;
+  comparison: ReportComparison & Record<string, unknown>;
+  recommendations: Record<string, unknown>;
+  status: string;
+};
+
+export type CorrectionLoopResponse = {
+  id: string;
+  courseId: string;
+  userId: string;
+  sourceSessionId?: string | null;
+  sourceReportId?: string | null;
+  loopIndex: number;
+  status: string;
+  goals: Array<Record<string, unknown>>;
+  drills: Array<Record<string, unknown>>;
+  plan: Record<string, unknown>;
+  results: Array<Record<string, unknown>>;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+};
+
+export const getCourseReports = async (courseId: string): Promise<CourseReportResponse[]> => {
+  const backendBaseUrl = getBackendBaseUrl();
+  if (!backendBaseUrl) return [];
+  const response = await fetch(`${backendBaseUrl}/api/courses/${courseId}/reports`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return Array.isArray(data.reports) ? data.reports : [];
+};
+
+export const getCourseCorrectionLoops = async (
+  courseId: string
+): Promise<CorrectionLoopResponse[]> => {
+  const backendBaseUrl = getBackendBaseUrl();
+  if (!backendBaseUrl) return [];
+  const response = await fetch(`${backendBaseUrl}/api/courses/${courseId}/correction-loops`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return Array.isArray(data.loops) ? data.loops : [];
+};
+
+export const createFinalReport = async (
+  courseId: string
+): Promise<CourseReportResponse | null> => {
+  const backendBaseUrl = getBackendBaseUrl();
+  if (!backendBaseUrl) return null;
+  const response = await fetch(`${backendBaseUrl}/api/courses/${courseId}/final-report`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!response.ok) return null;
+  return (await response.json()) as CourseReportResponse;
+};
+
+export const getFinalReport = async (
+  courseId: string
+): Promise<CourseReportResponse | null> => {
+  const backendBaseUrl = getBackendBaseUrl();
+  if (!backendBaseUrl) return null;
+  const response = await fetch(`${backendBaseUrl}/api/courses/${courseId}/final-report`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!response.ok) return null;
+  return (await response.json()) as CourseReportResponse;
 };
 
 export const normalizeReport = (
   report: Partial<InterviewReport> & {
+    displayMetrics?: unknown;
     overallSummary?: string[];
-    overallFeedback?: {
-      improvementPoints?: string[];
-      content?: string;
-      nonverbal?: string;
-    };
     questions?: InterviewReportQuestion[];
-    nextPractice?: {
-      targetPhase?: string;
-      recommendedQuestion?: string;
-    };
   },
   sessionId: string
 ): InterviewReport => {
   const questions = Array.isArray(report.questions) ? report.questions : [];
-  const summary =
-    report.summary ??
-    report.overallSummary?.filter(Boolean).join(" ") ??
-    fallbackReport.summary;
   const metrics = Array.isArray(report.metrics)
     ? report.metrics
-    : fallbackReport.metrics;
-  const weakPatterns =
-    report.weakPatterns ?? buildWeakPatternsFromQuestions(questions, report);
-  const recommendedPlan = report.recommendedPlan ?? {
-    ...fallbackDrillPlan,
-    sourceSessionId: sessionId,
-    drills: fallbackDrillPlan.drills.map((drill) => ({
-      ...drill,
-      sourceQuestionIds:
-        weakPatterns[0]?.sourceQuestionIds ?? drill.sourceQuestionIds,
-      sourceFlow: weakPatterns[0]?.flow ?? drill.sourceFlow,
-      sourceTopic: weakPatterns[0]?.topic ?? drill.sourceTopic,
-      analysisFocus: weakPatterns[0]?.analysisFocus ?? drill.analysisFocus,
-    })),
-  };
+    : Array.isArray(report.displayMetrics)
+    ? (report.displayMetrics as InterviewReport["metrics"])
+    : [];
+  const weakPatterns = report.weakPatterns ?? [];
+  const recommendedPlan = report.recommendedPlan;
+
+  if (!metrics.length || !weakPatterns.length || !recommendedPlan) {
+    throw new Error("Report is missing product result fields");
+  }
 
   return {
     sessionId: report.sessionId ?? sessionId,
     reportId: report.reportId ?? `report_${sessionId}`,
     status: report.status ?? "ready",
-    summary,
-    totalScore: report.totalScore ?? fallbackReport.totalScore,
+    summary: report.summary ?? report.overallSummary?.filter(Boolean).join(" ") ?? "",
+    totalScore: report.totalScore ?? 0,
     metrics,
     weakPatterns,
     recommendedPlan,
     questions,
+    behaviorLinkedMoments: (report as { behaviorLinkedMoments?: Array<Record<string, unknown>> })
+      .behaviorLinkedMoments,
+    comparison: (report as { comparison?: ReportComparison }).comparison,
   };
-};
-
-const buildWeakPatternsFromQuestions = (
-  questions: InterviewReportQuestion[],
-  report: {
-    overallFeedback?: {
-      improvementPoints?: string[];
-      content?: string;
-      nonverbal?: string;
-    };
-    nextPractice?: {
-      targetPhase?: string;
-      recommendedQuestion?: string;
-    };
-  }
-): InterviewWeakPattern[] => {
-  if (!questions.length) {
-    return fallbackReport.weakPatterns;
-  }
-
-  const sourceQuestionIds = questions
-    .map((question) => question.questionId)
-    .filter((questionId): questionId is string => Boolean(questionId));
-  const firstQuestion = questions.find((question) => question.questionId);
-  const evidence = [
-    ...(report.overallFeedback?.improvementPoints ?? []),
-    ...questions
-      .map((question) => question.answerText?.trim())
-      .filter((text): text is string => Boolean(text))
-      .slice(0, 2)
-      .map((text) => `답변 근거: ${text.slice(0, 100)}`),
-  ].slice(0, 4);
-  const firstFocus = firstQuestion?.analysisFocus;
-  const analysisFocus = Array.isArray(firstFocus)
-    ? firstFocus
-    : fallbackReport.weakPatterns[0]?.analysisFocus;
-
-  return [
-    {
-      id: "backend_question_pattern",
-      title: report.nextPractice?.targetPhase
-        ? `${report.nextPractice.targetPhase} 보완 패턴`
-        : "질문별 답변 보완 패턴",
-      target: analysisFocus?.[0] ?? "answer_structure",
-      flow: firstQuestion?.phase as InterviewWeakPattern["flow"],
-      topic: firstQuestion?.topic as InterviewWeakPattern["topic"],
-      sourceQuestionIds,
-      analysisFocus,
-      evidence: evidence.length ? evidence : fallbackReport.weakPatterns[0].evidence,
-      recommendedInstruction:
-        report.nextPractice?.recommendedQuestion ??
-        fallbackReport.weakPatterns[0].recommendedInstruction,
-    },
-  ];
 };
 
 export const persistDrillPlan = (plan: DrillPlan) => {

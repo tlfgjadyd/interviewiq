@@ -14,8 +14,10 @@ import type {
   InterviewQuestion,
   QuestionSetId,
   RuntimeQuestionMeta,
+  RealtimeAudioSignal,
   SessionType,
 } from "@/lib/runtime-types";
+import { authHeaders } from "@/lib/session-api";
 
 export type SessionCreatePayload = {
   sessionType?: SessionType;
@@ -30,9 +32,11 @@ export type SessionCreatePayload = {
   totalQuestions: number;
   baselineId?: string;
   sourceSessionId?: string;
+  drillIndex?: number;
   drillId?: string;
   drillTarget?: DrillTarget;
   maxAnswerSec?: number;
+  initialQuestion?: string;
 };
 
 export type InterviewSessionState = {
@@ -114,6 +118,7 @@ type InterviewSessionContextValue = {
   backendBaseUrl: string;
   session: InterviewSessionState | null;
   latestVision: InterviewBehaviorAnalysis | null;
+  latestAudioSignal: RealtimeAudioSignal | null;
   isAnswerRecording: boolean;
   isCreatingSession: boolean;
   isFinishingAnswer: boolean;
@@ -128,6 +133,7 @@ type InterviewSessionContextValue = {
   finishSession: () => Promise<SessionFinishResponse | null>;
   setAnswerRecording: (recording: boolean) => void;
   setLatestVision: (analysis: InterviewBehaviorAnalysis | null) => void;
+  setLatestAudioSignal: (signal: RealtimeAudioSignal | null) => void;
 };
 
 const DEFAULT_SESSION_PAYLOAD: SessionCreatePayload = {
@@ -140,6 +146,7 @@ const DEFAULT_SESSION_PAYLOAD: SessionCreatePayload = {
   totalQuestions: 12,
 };
 const DOCUMENT_STORAGE_KEY = "interviewiq-documents";
+const COURSE_STORAGE_KEY = "interviewiq-course";
 
 type StoredDocuments = {
   resumeText?: string;
@@ -148,9 +155,26 @@ type StoredDocuments = {
   role?: string;
 };
 
+type StoredCourse = {
+  courseId?: string;
+  company?: string;
+  role?: string;
+  interviewType?: string;
+};
+
 type SessionDocumentsResponse = {
   personalizedQuestion?: string;
   personalizedQuestionSource?: string | null;
+};
+
+type CourseSessionStartResponse = {
+  session: {
+    id: string;
+    courseId: string;
+    sessionType: SessionType;
+    totalQuestions: number;
+  };
+  runtime: SessionCreateResponse;
 };
 
 const InterviewSessionContext =
@@ -182,6 +206,8 @@ export const InterviewSessionProvider = ({
   const [session, setSession] = useState<InterviewSessionState | null>(null);
   const [latestVision, setLatestVision] =
     useState<InterviewBehaviorAnalysis | null>(null);
+  const [latestAudioSignal, setLatestAudioSignal] =
+    useState<RealtimeAudioSignal | null>(null);
   const [isAnswerRecording, setIsAnswerRecording] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [isFinishingAnswer, setIsFinishingAnswer] = useState(false);
@@ -194,25 +220,59 @@ export const InterviewSessionProvider = ({
       setError(null);
 
       try {
+        const storedCourse = readStoredCourse();
         const requestPayload = {
           ...DEFAULT_SESSION_PAYLOAD,
+          company: storedCourse?.company ?? DEFAULT_SESSION_PAYLOAD.company,
+          role: storedCourse?.role ?? DEFAULT_SESSION_PAYLOAD.role,
+          interviewType:
+            storedCourse?.interviewType ?? DEFAULT_SESSION_PAYLOAD.interviewType,
           ...payload,
+          courseId: payload?.courseId ?? storedCourse?.courseId,
         };
-        const response = await fetch(`${backendBaseUrl}/api/sessions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestPayload),
-        });
+        const response = requestPayload.courseId
+          ? await fetch(
+              `${backendBaseUrl}/api/courses/${requestPayload.courseId}/sessions/start`,
+              {
+                method: "POST",
+                headers: authHeaders({
+                  "Content-Type": "application/json",
+                }),
+                body: JSON.stringify({
+                  sessionType: requestPayload.sessionType ?? "full",
+                  cycleIndex: 1,
+                  chunkMs: requestPayload.chunkMs,
+                  cluster: requestPayload.cluster,
+                  industry: requestPayload.industry,
+                  totalQuestions: requestPayload.totalQuestions,
+                  sourceSessionId: requestPayload.sourceSessionId,
+                  drillIndex: requestPayload.drillIndex,
+                  drillId: requestPayload.drillId,
+                  drillTarget: requestPayload.drillTarget,
+                  initialQuestion: requestPayload.initialQuestion,
+                }),
+              }
+            )
+          : await fetch(`${backendBaseUrl}/api/sessions`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(requestPayload),
+            });
 
         if (!response.ok) {
           throw new Error(`Failed to create session: ${response.status}`);
         }
 
-        const data = (await response.json()) as SessionCreateResponse;
+        const rawData = await response.json();
+        const data = requestPayload.courseId
+          ? ((rawData as CourseSessionStartResponse).runtime as SessionCreateResponse)
+          : (rawData as SessionCreateResponse);
+        const dbSession = requestPayload.courseId
+          ? (rawData as CourseSessionStartResponse).session
+          : null;
 
-        let currentQuestion = data.firstQuestion;
         const storedDocuments = readStoredDocuments();
         if (storedDocuments?.resumeText && storedDocuments.jobPostingText) {
           const documentResponse = await fetch(
@@ -230,22 +290,18 @@ export const InterviewSessionProvider = ({
               }),
             }
           );
-          if (documentResponse.ok) {
-            const documentData =
-              (await documentResponse.json()) as SessionDocumentsResponse;
-            currentQuestion =
-              documentData.personalizedQuestion?.trim() || currentQuestion;
-          } else {
+          if (!documentResponse.ok) {
             console.warn("[session-documents-sync-failed]", documentResponse.status);
           }
         }
 
         setSession({
           sessionId: data.sessionId,
-          sessionType: data.sessionType ?? requestPayload.sessionType ?? "full",
+          sessionType:
+            data.sessionType ?? dbSession?.sessionType ?? requestPayload.sessionType ?? "full",
           answerTurnId: data.answerTurnId,
           chunkMs: requestPayload.chunkMs,
-          currentQuestion,
+          currentQuestion: data.firstQuestion,
           currentQuestionMeta:
             data.currentQuestionMeta ?? data.currentQuestion ?? data.firstQuestionMeta,
           questionIndex: data.questionIndex,
@@ -257,7 +313,7 @@ export const InterviewSessionProvider = ({
           currentChunkIndex: 0,
           status: "active",
           reportId: null,
-          courseId: data.courseId ?? requestPayload.courseId,
+          courseId: data.courseId ?? dbSession?.courseId ?? requestPayload.courseId,
           questionSetId: data.questionSetId ?? requestPayload.questionSetId,
           baselineId: data.baselineId ?? requestPayload.baselineId,
           sourceSessionId: data.sourceSessionId ?? requestPayload.sourceSessionId,
@@ -265,6 +321,7 @@ export const InterviewSessionProvider = ({
           drillTarget: data.drillTarget ?? requestPayload.drillTarget,
         });
         setLatestVision(null);
+        setLatestAudioSignal(null);
         setIsAnswerRecording(false);
       } catch (err) {
         const message =
@@ -348,6 +405,7 @@ export const InterviewSessionProvider = ({
             : current
         );
         setLatestVision(null);
+        setLatestAudioSignal(null);
         setIsAnswerRecording(false);
         return data;
       } catch (err) {
@@ -397,6 +455,7 @@ export const InterviewSessionProvider = ({
           : current
       );
       setLatestVision(null);
+      setLatestAudioSignal(null);
       setIsAnswerRecording(false);
       return data;
     } catch (err) {
@@ -420,6 +479,7 @@ export const InterviewSessionProvider = ({
         backendBaseUrl,
         session,
         latestVision,
+        latestAudioSignal,
         isAnswerRecording,
         isCreatingSession,
         isFinishingAnswer,
@@ -443,6 +503,7 @@ export const InterviewSessionProvider = ({
           }
         },
         setLatestVision,
+        setLatestAudioSignal,
       }}
     >
       {children}
@@ -462,6 +523,23 @@ const readStoredDocuments = (): StoredDocuments | null => {
 
   try {
     return JSON.parse(raw) as StoredDocuments;
+  } catch {
+    return null;
+  }
+};
+
+const readStoredCourse = (): StoredCourse | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const raw = localStorage.getItem(COURSE_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as StoredCourse;
   } catch {
     return null;
   }

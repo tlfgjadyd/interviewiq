@@ -4,7 +4,14 @@ export const useCamera = (videoRef: React.RefObject<HTMLVideoElement>) => {
   useEffect(() => {
     const startCamera = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }

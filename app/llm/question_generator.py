@@ -33,14 +33,10 @@ class GeneratedQuestion:
 class QuestionGenerator:
     def __init__(self) -> None:
         api_key = (settings.OPENROUTER_API_KEY or settings.OPENAI_API_KEY or "").strip()
-        self.client = (
-            OpenAI(
-                api_key=api_key,
-                base_url=settings.OPENROUTER_BASE_URL,
-            )
-            if api_key
-            else None
-        )
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        if settings.OPENROUTER_API_KEY:
+            client_kwargs["base_url"] = settings.OPENROUTER_BASE_URL
+        self.client = OpenAI(**client_kwargs) if api_key else None
         self.model = settings.OPENROUTER_QUESTION_MODEL
         self.enabled = settings.ENABLE_LLM_QUESTION_GENERATION and self.client is not None
 

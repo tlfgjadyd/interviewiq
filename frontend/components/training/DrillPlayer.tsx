@@ -19,7 +19,7 @@ import { BaselineFrameGuide } from "@/components/baseline/BaselineFrameGuide";
 import Camera from "@/components/Camera/Camera";
 import { useInterviewRuntime } from "@/components/runtime/InterviewRuntimeProvider";
 import { Button } from "@/components/ui/button";
-import type { DrillSessionResult } from "@/lib/runtime-types";
+import type { DrillPlan, DrillSessionResult } from "@/lib/runtime-types";
 import { drillPlan, type Drill } from "@/lib/training";
 
 const COMPLETION_STORAGE_KEY = "interviewiq-training-plan";
@@ -33,7 +33,10 @@ type StoredTrainingPlan = {
 
 type DrillMode = "ready" | "countdown" | "answering" | "miniCheck";
 
-const readCompletionFallback = (): StoredTrainingPlan => {
+const completionStorageKey = (planId?: string) =>
+  planId ? `${COMPLETION_STORAGE_KEY}:${planId}` : COMPLETION_STORAGE_KEY;
+
+const readCompletionFallback = (planId?: string): StoredTrainingPlan => {
   const fallback = {
     goalId: "goal_structure_specificity",
     acceptedAt: new Date().toISOString(),
@@ -44,7 +47,7 @@ const readCompletionFallback = (): StoredTrainingPlan => {
     return fallback;
   }
 
-  const raw = localStorage.getItem(COMPLETION_STORAGE_KEY);
+  const raw = localStorage.getItem(completionStorageKey(planId));
   if (!raw) {
     return fallback;
   }
@@ -58,10 +61,12 @@ const readCompletionFallback = (): StoredTrainingPlan => {
 
 export const DrillPlayer = ({
   drill,
+  plan,
   planId,
   step,
 }: {
   drill: Drill;
+  plan?: DrillPlan;
   planId?: string;
   step?: number;
 }) => {
@@ -82,10 +87,11 @@ export const DrillPlayer = ({
   const [lastResult, setLastResult] = useState<DrillSessionResult | null>(null);
 
   const currentStep = step ?? drill.drillIndex - 1;
-  const nextStep = currentStep + 1 < drillPlan.length ? currentStep + 1 : null;
+  const planLength = Math.max(1, plan?.drills?.length ?? drillPlan.length);
+  const nextStep = currentStep + 1 < planLength ? currentStep + 1 : null;
   const nextLegacyDrill =
     drill.drillIndex < drillPlan.length ? drill.drillIndex + 1 : null;
-  const progress = Math.round(((currentStep + 1) / drillPlan.length) * 100);
+  const progress = Math.round(((currentStep + 1) / planLength) * 100);
   const latestResult = lastResult ?? drillResults[drillResults.length - 1];
   const previousResult = drillResults[drillResults.length - 2];
   const questionText = currentQuestion || drill.question;
@@ -101,9 +107,9 @@ export const DrillPlayer = ({
   }, [remainingSec]);
 
   useEffect(() => {
-    const plan = readCompletionFallback();
+    const plan = readCompletionFallback(planId);
     setCompletedDrills(plan.completedDrills);
-  }, []);
+  }, [planId]);
 
   const beginCountdown = useCallback(async () => {
     if (!session || session.status === "finished") {
@@ -177,7 +183,7 @@ export const DrillPlayer = ({
   };
 
   const completeDrill = () => {
-    const plan = readCompletionFallback();
+    const plan = readCompletionFallback(planId);
     const updated = Array.from(
       new Set([...plan.completedDrills, drill.drillIndex])
     ).sort((a, b) => a - b);
@@ -186,7 +192,7 @@ export const DrillPlayer = ({
       completedDrills: updated,
     };
 
-    localStorage.setItem(COMPLETION_STORAGE_KEY, JSON.stringify(nextPlan));
+    localStorage.setItem(completionStorageKey(planId), JSON.stringify(nextPlan));
     setCompletedDrills(updated);
   };
 
@@ -263,13 +269,6 @@ export const DrillPlayer = ({
                 LIVE
               </div>
 
-              <button
-                type="button"
-                aria-label="fullscreen"
-                className="absolute right-[3.2%] top-[3.4%] z-20 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-950/30 text-white shadow-lg backdrop-blur transition hover:bg-slate-950/45"
-              >
-                <Maximize2 className="h-5 w-5" />
-              </button>
 
               <div className="absolute left-[4.8%] top-[43%] z-10 max-w-[36%] -translate-y-1/2 text-white">
                 <p className="text-[clamp(18px,1.5vw,28px)] font-bold text-blue-300">
@@ -425,7 +424,7 @@ export const DrillPlayer = ({
           </Button>
           <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
             <Clock3 className="h-4 w-4" />
-            Drill {currentStep + 1} / {drillPlan.length}
+            Drill {currentStep + 1} / {planLength}
           </div>
         </nav>
 
@@ -434,7 +433,7 @@ export const DrillPlayer = ({
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
                 <Target className="h-4 w-4" />
-                Loop 1 · Drill {currentStep + 1} of {drillPlan.length}
+                Loop {plan?.drillSet?.loopIndex ?? 1} · Drill {currentStep + 1} of {planLength}
               </div>
               <h1 className="mt-3 text-2xl font-semibold leading-tight lg:text-3xl">
                 {drill.title}

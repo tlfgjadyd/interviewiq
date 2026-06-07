@@ -84,6 +84,10 @@ class CourseSessionStartCreate(BaseModel):
     cycleIndex: int = Field(default=1, ge=1)
     drillIndex: int | None = Field(default=None, ge=1)
     targetPhase: TargetPhase | None = None
+    sourceSessionId: str | None = None
+    drillId: str | None = None
+    drillTarget: str | None = None
+    initialQuestion: str | None = None
     chunkMs: int = Field(default=5000, gt=0)
     cluster: str | None = None
     industry: str | None = None
@@ -113,6 +117,13 @@ class CourseSessionListResponse(BaseModel):
 
 class RuntimeSessionResponse(BaseModel):
     sessionId: str
+    sessionType: str | None = None
+    courseId: str | None = None
+    questionSetId: str | None = None
+    sourceSessionId: str | None = None
+    drillId: str | None = None
+    drillTarget: str | None = None
+    maxAnswerSec: int | None = None
     answerTurnId: str
     firstQuestion: str
     firstQuestionSource: str | None = None
@@ -155,3 +166,24 @@ class ReportResponse(BaseModel):
 
 class ReportListResponse(BaseModel):
     reports: list[ReportResponse]
+
+
+class CorrectionLoopResponse(BaseModel):
+    id: str
+    courseId: str
+    userId: str
+    sourceSessionId: str | None
+    sourceReportId: str | None
+    loopIndex: int
+    status: str
+    goals: list[dict[str, Any]]
+    drills: list[dict[str, Any]]
+    plan: dict[str, Any]
+    results: list[dict[str, Any]]
+    createdAt: datetime
+    updatedAt: datetime
+    completedAt: datetime | None
+
+
+class CorrectionLoopListResponse(BaseModel):
+    loops: list[CorrectionLoopResponse]

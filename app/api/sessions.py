@@ -24,10 +24,11 @@ from app.core.r2 import create_presigned_get_url
 from app.db.database import AsyncSessionLocal
 from app.db.database import get_db
 from app.db.models import Asset
+from app.db.models import CorrectionLoop
 from app.db.models import Report as DbReport
 from app.db.models import Session as DbSession
 from app.db.models import User
-from app.llm import QuestionGenerator
+from app.llm import AnswerEvaluator, QuestionGenerator
 from app.llm.question_generator import GeneratedQuestion
 from app.llm.transcriber import AudioTranscriber, TranscriptionResult
 from app.rag import RagRetriever
@@ -62,6 +63,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 logger = logging.getLogger("uvicorn.error")
 rag_retriever = RagRetriever()
 question_generator = QuestionGenerator()
+answer_evaluator = AnswerEvaluator()
 audio_transcriber = AudioTranscriber()
 TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣+#.]+")
 MAX_DOCUMENT_PDF_BYTES = 10 * 1024 * 1024
@@ -961,6 +963,11 @@ def _build_report_metrics(
     long_silence_threshold_ms = 3000
     answer_texts = [str(analysis.get("answerText") or "") for analysis in answered_turns]
     answer_lengths = [len(text.strip()) for text in answer_texts if text.strip()]
+    content_analyses = [
+        analysis.get("contentAnalysis")
+        for analysis in answered_turns
+        if isinstance(analysis.get("contentAnalysis"), dict)
+    ]
     transcript_sources: dict[str, int] = {}
     phase_metrics: dict[str, dict[str, Any]] = {}
     answer_phase_by_turn: dict[str, str] = {}
@@ -979,9 +986,12 @@ def _build_report_metrics(
                 "totalBadPostureMs": 0,
                 "longSilenceCount": 0,
                 "totalSilenceMs": 0,
+                "fidgetingCount": 0,
+                "legShakingCount": 0,
                 "_behaviorRiskScores": [],
                 "_nonverbalRiskScores": [],
                 "_gazePenalties": [],
+                "_legShakingScores": [],
                 "_speakingRatios": [],
                 "_rmsVolumes": [],
             },
@@ -1037,6 +1047,15 @@ def _build_report_metrics(
             if posture.get("isBadPosture") or posture.get("isPostureCollapsed"):
                 bucket["badPostureCount"] += 1
                 bucket["totalBadPostureMs"] += duration_ms
+            gesture = vision.get("gesture") if isinstance(vision.get("gesture"), dict) else {}
+            leg_shaking_score = _number(gesture.get("legShakingScore"))
+            if leg_shaking_score is not None:
+                bucket["_legShakingScores"].append(leg_shaking_score)
+            states = vision.get("states") if isinstance(vision.get("states"), dict) else {}
+            if states.get("isFidgeting"):
+                bucket["fidgetingCount"] += 1
+            if states.get("isLegShaking"):
+                bucket["legShakingCount"] += 1
 
         audio_signals = (
             chunk.get("realtimeAudioSignals")
@@ -1079,6 +1098,17 @@ def _build_report_metrics(
             int(phase_bucket["badPostureCount"]),
             vision_count,
         )
+        phase_bucket["fidgetingRatio"] = _ratio(
+            int(phase_bucket["fidgetingCount"]),
+            vision_count,
+        )
+        phase_bucket["legShakingRatio"] = _ratio(
+            int(phase_bucket["legShakingCount"]),
+            vision_count,
+        )
+        phase_bucket["averageLegShakingScore"] = _average(
+            [float(value) for value in phase_bucket.pop("_legShakingScores", [])]
+        )
         phase_bucket["averageSpeakingRatio"] = _average(
             [float(value) for value in phase_bucket.pop("_speakingRatios", [])]
         )
@@ -1114,6 +1144,7 @@ def _build_report_metrics(
             "eventCounts": event_counts,
         },
         "audio": {
+            "audioSignalChunkCount": len(audio_signal_chunks),
             "averageSpeakingRatio": _average(speaking_ratios),
             "averageRmsVolume": _average(rms_volumes),
             "averagePeakVolume": _average(peak_volumes),
@@ -1132,6 +1163,49 @@ def _build_report_metrics(
             "transcriptSources": transcript_sources,
             "averageAnswerLengthChars": _average([float(value) for value in answer_lengths]),
             "totalAnswerLengthChars": sum(answer_lengths),
+            "starScore": _average(
+                [
+                    float(analysis.get("star", {}).get("score"))
+                    for analysis in content_analyses
+                    if isinstance(analysis.get("star"), dict)
+                    and _number(analysis.get("star", {}).get("score")) is not None
+                ]
+            ),
+            "specificityScore": _average(
+                [
+                    float(analysis.get("specificityScore"))
+                    for analysis in content_analyses
+                    if _number(analysis.get("specificityScore")) is not None
+                ]
+            ),
+            "jobFitScore": _average(
+                [
+                    float(analysis.get("jobFitScore"))
+                    for analysis in content_analyses
+                    if _number(analysis.get("jobFitScore")) is not None
+                ]
+            ),
+            "keywordCoverageScore": _average(
+                [
+                    float(analysis.get("keywordCoverageScore"))
+                    for analysis in content_analyses
+                    if _number(analysis.get("keywordCoverageScore")) is not None
+                ]
+            ),
+            "evidenceScore": _average(
+                [
+                    float(analysis.get("evidenceScore"))
+                    for analysis in content_analyses
+                    if _number(analysis.get("evidenceScore")) is not None
+                ]
+            ),
+            "relevanceScore": _average(
+                [
+                    float(analysis.get("relevanceScore"))
+                    for analysis in content_analyses
+                    if _number(analysis.get("relevanceScore")) is not None
+                ]
+            ),
         },
         "phase": phase_metrics,
         "drillRecommendation": drill_recommendation,
@@ -1197,6 +1271,12 @@ def _calculate_phase_weakness(phase_metrics: dict[str, dict[str, Any]]) -> dict[
         nonverbal_score = _bounded_score(_number(metrics.get("averageNonverbalRiskScore")))
         gaze_score = _bounded_score(_number(metrics.get("gazeAwayRatio")), scale=1.0)
         posture_score = _bounded_score(_number(metrics.get("badPostureRatio")), scale=1.0)
+        fidget_score = _bounded_score(_number(metrics.get("fidgetingRatio")), scale=1.0)
+        leg_shaking_ratio_score = _bounded_score(
+            _number(metrics.get("legShakingRatio")),
+            scale=1.0,
+        )
+        leg_shaking_score = _bounded_score(_number(metrics.get("averageLegShakingScore")))
         silence_count = _number(metrics.get("longSilenceCount")) or 0.0
         silence_score = min(silence_count * 20.0, 100.0)
 
@@ -1212,9 +1292,12 @@ def _calculate_phase_weakness(phase_metrics: dict[str, dict[str, Any]]) -> dict[
 
         weakness_score = round(
             nonverbal_score * 0.25
-            + gaze_score * 0.2
-            + posture_score * 0.15
-            + silence_score * 0.2
+            + gaze_score * 0.16
+            + posture_score * 0.12
+            + fidget_score * 0.08
+            + leg_shaking_ratio_score * 0.08
+            + leg_shaking_score * 0.08
+            + silence_score * 0.13
             + speaking_score * 0.1
             + content_score * 0.1,
             2,
@@ -1227,6 +1310,10 @@ def _calculate_phase_weakness(phase_metrics: dict[str, dict[str, Any]]) -> dict[
             reasons.append("시선 이탈 비율이 높습니다.")
         if posture_score >= 35:
             reasons.append("자세 불안정 비율이 높습니다.")
+        if fidget_score >= 35:
+            reasons.append("fidget ratio is high.")
+        if leg_shaking_ratio_score >= 25 or leg_shaking_score >= 65:
+            reasons.append("leg shaking signal is high.")
         if silence_score >= 40:
             reasons.append("긴 침묵 구간이 반복되었습니다.")
         if speaking_score >= 35:
@@ -1261,6 +1348,344 @@ def _calculate_phase_weakness(phase_metrics: dict[str, dict[str, Any]]) -> dict[
         "phaseScores": phase_scores,
         "reasons": target["reasons"],
     }
+
+
+def _read_metric(metrics: dict[str, Any], path: str) -> float | None:
+    current: Any = metrics
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return _number(current)
+
+
+def _readiness_score_from_risk(risk: float | None) -> int:
+    if risk is None:
+        return 50
+    return max(0, min(100, round(100 - risk)))
+
+
+def _ratio_readiness(value: float | None) -> int:
+    if value is None:
+        return 50
+    return max(0, min(100, round(100 - (value * 100))))
+
+
+def _build_display_metrics(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    gaze_ratio = _read_metric(metrics, "nonverbal.gazeAwayRatio")
+    posture_ratio = _read_metric(metrics, "nonverbal.badPostureRatio")
+    leg_ratio = _read_metric(metrics, "nonverbal.legShakingRatio")
+    answer_len = _read_metric(metrics, "content.averageAnswerLengthChars")
+    star_score = _read_metric(metrics, "content.starScore")
+    specificity_score = _read_metric(metrics, "content.specificityScore")
+    job_fit_score = _read_metric(metrics, "content.jobFitScore")
+    evidence_score = _read_metric(metrics, "content.evidenceScore")
+    relevance_score = _read_metric(metrics, "content.relevanceScore")
+
+    content_score = 50
+    content_components = [
+        value
+        for value in [star_score, specificity_score, evidence_score, relevance_score]
+        if value is not None
+    ]
+    if content_components:
+        content_score = round(sum(content_components) / len(content_components))
+    elif answer_len is not None:
+        content_score = max(0, min(100, round(min(answer_len / 140, 1.0) * 100)))
+
+    delivery_score = round(
+        (
+            _ratio_readiness(gaze_ratio) * 0.45
+            + _ratio_readiness(posture_ratio) * 0.25
+            + _ratio_readiness(leg_ratio) * 0.30
+        )
+    )
+    nonverbal_score = _readiness_score_from_risk(
+        _read_metric(metrics, "nonverbal.averageNonverbalRiskScore")
+    )
+
+    return [
+        {
+            "metricKey": "answer_quality",
+            "label": "답변 품질",
+            "score": content_score,
+            "status": "양호" if content_score >= 70 else "보완 필요",
+            "summary": (
+                f"STAR 구조 {star_score if star_score is not None else '미측정'}점, "
+                f"구체성 {specificity_score if specificity_score is not None else '미측정'}점, "
+                f"근거 제시 {evidence_score if evidence_score is not None else '미측정'}점입니다."
+            ),
+        },
+        {
+            "metricKey": "job_fit",
+            "label": "직무 적합성",
+            "score": round(job_fit_score if job_fit_score is not None else 50),
+            "status": "양호" if (job_fit_score or 0) >= 70 else "보완 필요",
+            "summary": "이력서와 채용공고의 핵심 키워드가 답변에 얼마나 자연스럽게 반영됐는지 평가했습니다.",
+        },
+        {
+            "metricKey": "delivery_stability",
+            "label": "전달 안정성",
+            "score": delivery_score,
+            "status": "양호" if delivery_score >= 70 else "보완 필요",
+            "summary": (
+                f"시선 이탈 비율 {gaze_ratio if gaze_ratio is not None else '미측정'}, "
+                f"다리 떨림 비율 {leg_ratio if leg_ratio is not None else '미측정'} 기준으로 산정했습니다."
+            ),
+        },
+        {
+            "metricKey": "nonverbal_risk",
+            "label": "비언어 리스크",
+            "score": nonverbal_score,
+            "status": "양호" if nonverbal_score >= 70 else "보완 필요",
+            "summary": "시선, 자세, 손 움직임, 다리 움직임이 면접 안정감에 주는 영향을 종합했습니다.",
+        },
+    ]
+
+
+def _build_total_score(display_metrics: list[dict[str, Any]]) -> int:
+    scores = [metric.get("score") for metric in display_metrics if isinstance(metric.get("score"), int)]
+    if not scores:
+        return 0
+    return round(sum(scores) / len(scores))
+
+
+def _event_evidence_for_phase(questions: list[dict[str, Any]], target_phase: str | None) -> list[str]:
+    evidence = []
+    for question in questions:
+        if target_phase and question.get("phase") != target_phase:
+            continue
+        events = question.get("events") if isinstance(question.get("events"), list) else []
+        for event in events[:3]:
+            event_type = event.get("type")
+            if not event_type:
+                continue
+            evidence.append(
+                "Q{question} {start}-{end}s {event}".format(
+                    question=question.get("questionIndex"),
+                    start=round(float(event.get("t0") or 0), 2),
+                    end=round(float(event.get("t1") or 0), 2),
+                    event=event_type,
+                )
+            )
+        if len(evidence) >= 4:
+            break
+    return evidence
+
+
+def _build_weak_patterns(
+    *,
+    metrics: dict[str, Any],
+    questions: list[dict[str, Any]],
+    drill_recommendation: dict[str, Any],
+) -> list[dict[str, Any]]:
+    target_phase = drill_recommendation.get("targetPhase")
+    phase_metrics = metrics.get("phase") if isinstance(metrics.get("phase"), dict) else {}
+    target_metrics = phase_metrics.get(target_phase) if isinstance(target_phase, str) else None
+    if not isinstance(target_metrics, dict):
+        target_metrics = {}
+
+    content = metrics.get("content") if isinstance(metrics.get("content"), dict) else {}
+    product_labels = {
+        "gaze_stability": (
+            "시선 안정화",
+            "핵심 문장을 말할 때 정면 응시를 유지하는 연습을 합니다.",
+        ),
+        "posture": (
+            "자세 안정화",
+            "답변 시작 전 자세를 고정하고 답변 중 상체 흔들림을 줄입니다.",
+        ),
+        "fidget": (
+            "반복 움직임 줄이기",
+            "손 움직임과 불필요한 자세 변화를 줄여 안정감을 높입니다.",
+        ),
+        "leg_shaking": (
+            "다리 움직임 줄이기",
+            "하체 움직임을 줄이고 답변 내내 앉은 자세를 일정하게 유지합니다.",
+        ),
+        "answer_structure": (
+            "STAR 답변 구조화",
+            "상황-역할-행동-결과 순서로 답변을 짧고 선명하게 정리합니다.",
+        ),
+        "specificity": (
+            "성과 근거 구체화",
+            "결과를 숫자, 비교, 사용자 영향 중 하나로 구체화합니다.",
+        ),
+        "job_fit": (
+            "직무 연결 강화",
+            "이력서 경험을 채용공고의 핵심 역량과 직접 연결해 말합니다.",
+        ),
+    }
+    candidates = [
+        ("gaze_stability", _number(target_metrics.get("gazeAwayRatio")) or 0),
+        ("posture", _number(target_metrics.get("badPostureRatio")) or 0),
+        ("fidget", _number(target_metrics.get("fidgetingRatio")) or 0),
+        ("leg_shaking", _number(target_metrics.get("legShakingRatio")) or 0),
+        ("answer_structure", (100 - (_number(content.get("starScore")) or 50)) / 100),
+        ("specificity", (100 - (_number(content.get("specificityScore")) or 50)) / 100),
+        ("job_fit", (100 - (_number(content.get("jobFitScore")) or 50)) / 100),
+    ]
+    ranked = sorted(candidates, key=lambda item: item[1], reverse=True)[:3]
+    source_question_ids = [
+        question.get("questionId")
+        for question in questions
+        if (not target_phase or question.get("phase") == target_phase) and question.get("questionId")
+    ]
+    evidence = _event_evidence_for_phase(questions, target_phase)
+    if not evidence:
+        evidence = drill_recommendation.get("reasons") or ["분석 가능한 이벤트 근거가 충분하지 않습니다."]
+
+    topic = next(
+        (
+            question.get("topic")
+            for question in questions
+            if not target_phase or question.get("phase") == target_phase
+        ),
+        None,
+    )
+    patterns = []
+    for priority, (target, weakness_score) in enumerate(ranked, start=1):
+        title, instruction = product_labels.get(
+            target,
+            ("교정 드릴", "이번 답변에서 가장 약한 신호를 집중적으로 교정합니다."),
+        )
+        patterns.append(
+            {
+                "id": f"weak_{target_phase or 'session'}_{target}",
+                "priority": priority,
+                "title": title,
+                "target": target,
+                "flow": target_phase,
+                "topic": topic,
+                "sourceQuestionIds": source_question_ids,
+                "analysisFocus": [target],
+                "evidence": evidence[:4],
+                "weaknessScore": round(float(weakness_score), 4),
+                "recommendedInstruction": instruction,
+            }
+        )
+    return patterns
+
+
+def _build_recommended_plan(
+    *,
+    session_id: str,
+    course_id: str | None,
+    weak_patterns: list[dict[str, Any]],
+    next_practice_question: str,
+) -> dict[str, Any]:
+    thresholds = {
+        "gaze_stability": ("nonverbal.gazeAwayRatio", "<=", 0.35),
+        "posture": ("nonverbal.badPostureRatio", "<=", 0.25),
+        "fidget": ("nonverbal.fidgetingRatio", "<=", 0.15),
+        "leg_shaking": ("nonverbal.legShakingRatio", "<=", 0.20),
+        "answer_structure": ("content.starScore", ">=", 75),
+        "specificity": ("content.specificityScore", ">=", 70),
+        "job_fit": ("content.jobFitScore", ">=", 70),
+    }
+    drill_questions = {
+        "gaze_stability": "방금 답변한 경험을 다시 설명하되, 핵심 문장을 말할 때 정면을 유지해 주세요.",
+        "posture": "같은 답변을 다시 말하면서 상체와 어깨 위치를 일정하게 유지해 주세요.",
+        "fidget": "같은 답변을 90초 안에 말하되 손 움직임을 최소화해 주세요.",
+        "leg_shaking": "같은 답변을 다시 말하면서 다리 움직임을 줄이고 하체를 고정해 주세요.",
+        "answer_structure": "방금 답변한 경험을 상황, 역할, 행동, 결과 순서로 다시 말해 주세요.",
+        "specificity": "방금 답변한 경험에서 결과를 숫자나 비교 기준으로 더 구체화해 주세요.",
+        "job_fit": "방금 답변한 경험을 지원 직무의 핵심 역량과 직접 연결해 설명해 주세요.",
+    }
+    drills = []
+    for index, pattern in enumerate((weak_patterns or [])[:3], start=1):
+        target = str(pattern.get("target") or "answer_structure")
+        metric, operator, threshold = thresholds.get(target, (target, "<=", 0.25))
+        source_question_ids = pattern.get("sourceQuestionIds") or []
+        drills.append(
+            {
+                "drillId": f"drill_{target}_{index}",
+                "title": str(pattern.get("title") or f"교정 드릴 {index}"),
+                "target": target,
+                "sourceFlow": pattern.get("flow"),
+                "sourceTopic": pattern.get("topic"),
+                "sourceQuestionIds": source_question_ids,
+                "sourcePatternId": pattern.get("id"),
+                "analysisFocus": pattern.get("analysisFocus") or [target],
+                "question": drill_questions.get(target, next_practice_question),
+                "instruction": str(
+                    pattern.get("recommendedInstruction")
+                    or "이번 답변에서 가장 약한 신호를 집중적으로 교정합니다."
+                ),
+                "passCriteria": {
+                    "metric": metric,
+                    "operator": operator,
+                    "threshold": threshold,
+                },
+            }
+        )
+    if not drills:
+        metric, operator, threshold = thresholds["answer_structure"]
+        drills.append(
+            {
+                "drillId": "drill_answer_structure_1",
+                "title": "STAR 답변 구조화",
+                "target": "answer_structure",
+                "sourceFlow": None,
+                "sourceTopic": None,
+                "sourceQuestionIds": [],
+                "sourcePatternId": None,
+                "analysisFocus": ["answer_structure"],
+                "question": next_practice_question,
+                "instruction": "상황-역할-행동-결과 순서로 답변을 다시 정리합니다.",
+                "passCriteria": {
+                    "metric": metric,
+                    "operator": operator,
+                    "threshold": threshold,
+                },
+            }
+        )
+    return {
+        "planId": f"plan_{session_id}",
+        "sourceSessionId": session_id,
+        "courseId": course_id,
+        "drillSet": {
+            "loopIndex": 1,
+            "totalDrills": len(drills),
+            "status": "planned",
+            "afterCompletion": "full_session",
+            "nextActionLabel": "드릴 3개 완료 후 재측정 풀세션을 진행합니다.",
+        },
+        "drills": drills,
+    }
+
+
+def _build_behavior_linked_moments(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    moments = []
+    for question in questions:
+        answer_text = str(question.get("answerText") or "")
+        events = question.get("events") if isinstance(question.get("events"), list) else []
+        for event in events:
+            event_type = event.get("type")
+            if event_type not in {"fidget", "leg_shaking", "leg_movement", "gaze_away", "bad_posture"}:
+                continue
+            moments.append(
+                {
+                    "questionId": question.get("questionId"),
+                    "questionIndex": question.get("questionIndex"),
+                    "topic": question.get("topic"),
+                    "eventType": event_type,
+                    "t0": event.get("t0"),
+                    "t1": event.get("t1"),
+                    "chunkId": event.get("chunkId"),
+                    "severity": event.get("severity"),
+                    "confidence": event.get("confidence"),
+                    "answerText": answer_text,
+                    "transcriptSegment": answer_text[:180],
+                    "interpretation": (
+                        f"{event_type} occurred during the answer. "
+                        "Precise transcript timestamps require STT segment timestamps."
+                    ),
+                }
+            )
+            if len(moments) >= 20:
+                return moments
+    return moments
 
 
 def _build_session_report(
@@ -1379,6 +1804,19 @@ def _build_session_report(
             else {}
         )
         answer_turn_id = str(analysis.get("answerTurnId") or "")
+        turn_events = []
+        for chunk in chunks_by_turn.get(answer_turn_id, []):
+            vision = chunk.get("vision") if isinstance(chunk.get("vision"), dict) else {}
+            events = vision.get("events") if isinstance(vision.get("events"), list) else []
+            for event in events:
+                if isinstance(event, dict):
+                    turn_events.append(
+                        {
+                            **event,
+                            "chunkId": chunk.get("chunkId"),
+                            "answerTurnId": answer_turn_id,
+                        }
+                    )
         question_reports.append(
             {
                 "answerTurnId": answer_turn_id,
@@ -1391,9 +1829,11 @@ def _build_session_report(
                 "answerText": analysis.get("answerText", ""),
                 "answerTextSource": analysis.get("answerTextSource"),
                 "transcription": analysis.get("transcription"),
+                "contentAnalysis": analysis.get("contentAnalysis"),
                 "contentFeedback": analysis.get("contentFeedback", []),
                 "nonverbalFeedback": analysis.get("nonverbalFeedback", {}),
                 "metrics": _build_answer_chunk_metrics(chunks_by_turn.get(answer_turn_id, [])),
+                "events": turn_events,
                 "endedBy": analysis.get("endedBy"),
                 "endedAt": analysis.get("endedAt"),
             }
@@ -1415,6 +1855,21 @@ def _build_session_report(
         if isinstance(drill_recommendation, dict)
         else None
     )
+    next_practice_question = "Repeat your strongest project experience in one minute using STAR."
+    display_metrics = _build_display_metrics(metrics)
+    weak_patterns = _build_weak_patterns(
+        metrics=metrics,
+        questions=question_reports,
+        drill_recommendation=drill_recommendation if isinstance(drill_recommendation, dict) else {},
+    )
+    recommended_plan = _build_recommended_plan(
+        session_id=session_id,
+        course_id=meta.get("courseId"),
+        weak_patterns=weak_patterns,
+        next_practice_question=next_practice_question,
+    )
+    behavior_linked_moments = _build_behavior_linked_moments(question_reports)
+    total_score = _build_total_score(display_metrics)
 
     return {
         "sessionId": session_id,
@@ -1425,6 +1880,12 @@ def _build_session_report(
         "interviewType": meta.get("interviewType"),
         "totalQuestions": meta.get("totalQuestions"),
         "answeredQuestions": len(answered_turns),
+        "summary": " ".join(summary_sentences),
+        "totalScore": total_score,
+        "displayMetrics": display_metrics,
+        "weakPatterns": weak_patterns,
+        "recommendedPlan": recommended_plan,
+        "behaviorLinkedMoments": behavior_linked_moments,
         "metrics": metrics,
         "debugMaterials": debug_materials,
         "overallSummary": summary_sentences,
@@ -1472,7 +1933,14 @@ async def _save_session_report(
 def _report_metrics_from_redis_report(report: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     metrics = report.get("metrics")
     if isinstance(metrics, dict):
-        return metrics
+        enriched = dict(metrics)
+        enriched["scoreSummary"] = {
+            "totalScore": report.get("totalScore"),
+            "displayMetrics": report.get("displayMetrics") or [],
+            "weakPatterns": report.get("weakPatterns") or [],
+        }
+        enriched["recommendedPlan"] = report.get("recommendedPlan") or {}
+        return enriched
     questions = report.get("questions") if isinstance(report.get("questions"), list) else []
     return {
         "schemaVersion": "metrics_v1",
@@ -1631,6 +2099,83 @@ async def _load_comparison_references(
     return baseline_report, previous_report
 
 
+async def _upsert_correction_loop_from_plan(
+    *,
+    db: Any,
+    course_id: str,
+    user_id: str,
+    source_session_id: str,
+    source_report_id: str,
+    plan: dict[str, Any],
+    weak_patterns: list[dict[str, Any]],
+) -> None:
+    plan_drill_set = plan.get("drillSet") if isinstance(plan.get("drillSet"), dict) else {}
+    loop_index = _number(plan_drill_set.get("loopIndex"))
+    if loop_index is None:
+        existing_count = await db.execute(
+            select(CorrectionLoop).where(
+                CorrectionLoop.course_id == course_id,
+                CorrectionLoop.user_id == user_id,
+            )
+        )
+        loop_index = len(existing_count.scalars().all()) + 1
+
+    result = await db.execute(
+        select(CorrectionLoop).where(
+            CorrectionLoop.course_id == course_id,
+            CorrectionLoop.user_id == user_id,
+            CorrectionLoop.source_report_id == source_report_id,
+        )
+    )
+    loop = result.scalar_one_or_none()
+    if loop is None:
+        loop = CorrectionLoop(
+            id=f"loop_{uuid.uuid4().hex[:12]}",
+            course_id=course_id,
+            user_id=user_id,
+            source_session_id=source_session_id,
+            source_report_id=source_report_id,
+        )
+        db.add(loop)
+
+    drills = plan.get("drills") if isinstance(plan.get("drills"), list) else []
+    goals = []
+    for index, pattern in enumerate(weak_patterns[: len(drills) or 3], start=1):
+        if not isinstance(pattern, dict):
+            continue
+        goals.append(
+            {
+                "goalId": pattern.get("id") or f"goal_{index}",
+                "priority": pattern.get("priority") or index,
+                "title": pattern.get("title") or f"교정 목표 {index}",
+                "target": pattern.get("target"),
+                "productMessage": pattern.get("recommendedInstruction") or "",
+                "targetMetric": (
+                    drills[index - 1].get("passCriteria", {}).get("metric")
+                    if index - 1 < len(drills) and isinstance(drills[index - 1], dict)
+                    else None
+                ),
+                "reason": pattern.get("evidence") or [],
+                "baselineValue": None,
+                "currentValue": None,
+                "targetValue": (
+                    drills[index - 1].get("passCriteria", {}).get("threshold")
+                    if index - 1 < len(drills) and isinstance(drills[index - 1], dict)
+                    else None
+                ),
+            }
+        )
+
+    loop.source_session_id = source_session_id
+    loop.source_report_id = source_report_id
+    loop.loop_index = int(loop_index)
+    loop.status = str(plan_drill_set.get("status") or "planned")
+    loop.goals = goals
+    loop.drills = drills
+    loop.plan = plan
+    loop.results = loop.results or []
+
+
 async def _sync_db_session_from_runtime(
     session_id: str,
     meta: dict[str, Any],
@@ -1683,20 +2228,46 @@ async def _sync_db_session_from_runtime(
                     DbReport.user_id == meta.get("userId"),
                 )
             )
-            if existing_report.scalar_one_or_none() is None:
-                db.add(
-                    DbReport(
-                        id=report_id,
-                        course_id=meta["courseId"],
-                        session_id=session_id,
-                        user_id=meta["userId"],
-                        report_type=report_type,
-                        summary=" ".join(report.get("overallSummary") or []) or None,
-                        metrics=metrics,
-                        comparison=comparison,
-                        recommendations=report.get("nextPractice") or {},
-                        status="ready",
-                    )
+            recommended_plan = (
+                report.get("recommendedPlan")
+                if isinstance(report.get("recommendedPlan"), dict)
+                else {}
+            )
+            recommendations = {
+                "nextPractice": report.get("nextPractice") or {},
+                "recommendedPlan": recommended_plan,
+            }
+            db_report = existing_report.scalar_one_or_none()
+            if db_report is None:
+                db_report = DbReport(
+                    id=report_id,
+                    course_id=meta["courseId"],
+                    session_id=session_id,
+                    user_id=meta["userId"],
+                    report_type=report_type,
+                    summary=" ".join(report.get("overallSummary") or []) or None,
+                    metrics=metrics,
+                    comparison=comparison,
+                    recommendations=recommendations,
+                    status="ready",
+                )
+                db.add(db_report)
+            else:
+                db_report.summary = " ".join(report.get("overallSummary") or []) or db_report.summary
+                db_report.metrics = metrics
+                db_report.comparison = comparison
+                db_report.recommendations = recommendations
+                db_report.status = "ready"
+
+            if report_type in {"baseline_report", "full_report"} and recommended_plan.get("drills"):
+                await _upsert_correction_loop_from_plan(
+                    db=db,
+                    course_id=meta["courseId"],
+                    user_id=meta["userId"],
+                    source_session_id=session_id,
+                    source_report_id=report_id,
+                    plan=recommended_plan,
+                    weak_patterns=report.get("weakPatterns") if isinstance(report.get("weakPatterns"), list) else [],
                 )
 
         await db.commit()
@@ -1801,6 +2372,68 @@ async def _extract_pdf_text(file: UploadFile, label: str) -> str:
         raise HTTPException(status_code=422, detail=f"{label} PDF has no extractable text")
     return text
 
+def _clean_company_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    return (
+        value.replace("[", "")
+        .replace("]", "")
+        .replace("(주)", "")
+        .replace("㈜", "")
+        .replace("주식회사", "")
+        .strip()
+    )
+
+
+def _clean_role_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    return (
+        value.replace("_", "/")
+        .replace(".pdf", "")
+        .strip()
+    )
+
+
+def _infer_company_and_role(
+    *,
+    job_posting_text: str,
+    job_posting_file_name: str | None,
+) -> tuple[str | None, str | None]:
+    company = None
+    role = None
+
+    if job_posting_file_name:
+        company_match = re.search(r"\[([^\]]+)\]", job_posting_file_name)
+        role_match = re.search(
+            r"\]\s*(.+?)(?:\(D-\d+\)|-\s*사람인|\.pdf)",
+            job_posting_file_name,
+        )
+
+        if company_match:
+            company = _clean_company_name(company_match.group(1))
+
+        if role_match:
+            role = _clean_role_name(role_match.group(1))
+
+    if not company:
+        company_match = re.search(r"^(.+?)\(주\)", job_posting_text, re.MULTILINE)
+        if company_match:
+            company = _clean_company_name(company_match.group(1))
+
+    if not role:
+        lines = [line.strip() for line in job_posting_text.splitlines() if line.strip()]
+
+        for line in lines[:20]:
+            if "(주)" in line or "채용중" in line or "사람인" in line:
+                continue
+
+            if any(keyword in line for keyword in ["담당자", "인턴", "채용", "개발", "엔지니어", "데이터", "AI"]):
+                role = _clean_role_name(line)
+                break
+
+    return company, role
+
 
 async def _parse_document_pdfs(
     *,
@@ -1813,18 +2446,26 @@ async def _parse_document_pdfs(
         _extract_pdf_text(resume_pdf, "resume"),
         _extract_pdf_text(job_posting_pdf, "jobPosting"),
     )
+
+    inferred_company, inferred_role = _infer_company_and_role(
+        job_posting_text=job_posting_text,
+        job_posting_file_name=job_posting_pdf.filename,
+    )
+    final_company = company or inferred_company
+    final_role = role or inferred_role
+
     payload = SessionDocumentsRequest(
         resumeText=resume_text,
         jobPostingText=job_posting_text,
-        company=company,
-        role=role,
+        company=final_company,
+        role=final_role,
     )
     parsed = SessionDocumentsPdfResponse(
         status="parsed",
         resumeText=resume_text,
         jobPostingText=job_posting_text,
-        company=company,
-        role=role,
+        company=final_company,
+        role=final_role,
         resumeFileName=resume_pdf.filename,
         jobPostingFileName=job_posting_pdf.filename,
     )
@@ -1872,8 +2513,8 @@ async def _process_session_documents_payload(
     await client.expire(_session_rag_docs_key(session_id), REDIS_TTL_SECONDS)
 
     meta["hasSessionDocuments"] = True
-    meta["currentQuestion"] = personalized_question.text
-    meta["currentQuestionSource"] = personalized_question.source
+    meta["personalizedQuestion"] = personalized_question.text
+    meta["personalizedQuestionSource"] = personalized_question.source
     await _write_json(_session_meta_key(session_id), meta)
 
     return SessionDocumentsResponse(
@@ -2028,11 +2669,16 @@ async def receive_audio_chunk(
                 "browserTranscript": parsed_metadata.browserTranscript,
                 "browserLatestText": parsed_metadata.browserLatestText,
             },
+            "realtimeAudioSignals": (
+                parsed_metadata.realtimeAudioSignals.model_dump()
+                if parsed_metadata.realtimeAudioSignals
+                else existing.get("realtimeAudioSignals")
+            ),
             "status": {
                 **existing.get("status", {}),
                 "audioReceived": True,
                 "speechReady": False,
-                "audioFeatureReady": False,
+                "audioFeatureReady": parsed_metadata.realtimeAudioSignals is not None,
             },
         },
     )
@@ -2258,6 +2904,15 @@ async def finish_answer(
         "isFinalQuestion": meta.get("isFinalQuestion", False),
         "questionMeta": meta.get("currentQuestionMeta") or meta.get("questionMeta"),
     }
+    content_evaluation = answer_evaluator.evaluate(
+        question_meta=(
+            current_progress.get("questionMeta")
+            if isinstance(current_progress.get("questionMeta"), dict)
+            else {}
+        ),
+        answer_text=answer_text,
+        behavior_metrics=_build_answer_chunk_metrics(chunks),
+    )
     is_final_answer = bool(current_progress.get("isFinalQuestion")) or int(
         current_progress.get("questionIndex", 1)
     ) >= int(current_progress.get("totalQuestions", 12))
@@ -2309,6 +2964,11 @@ async def finish_answer(
         ),
         "answerText": answer_text,
         "answerTextSource": answer_text_source,
+        "contentAnalysis": {
+            **content_evaluation.data,
+            "source": content_evaluation.source,
+            "error": content_evaluation.error,
+        },
         "chunkCount": len(chunks),
         "interviewProgress": current_progress,
         "nextInterviewProgress": next_progress,

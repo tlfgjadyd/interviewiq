@@ -12,9 +12,10 @@ import {
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getBackendBaseUrl } from "@/lib/session-api";
+import { authHeaders, getBackendBaseUrl } from "@/lib/session-api";
 
 const DOCUMENT_STORAGE_KEY = "interviewiq-documents";
+const COURSE_STORAGE_KEY = "interviewiq-course";
 const ACCESS_TOKEN_KEY = "interviewiq-access-token";
 
 type ParsedDocuments = {
@@ -26,18 +27,28 @@ type ParsedDocuments = {
   jobPostingFileName?: string | null;
 };
 
+type CourseResponse = {
+  id: string;
+  documentId?: string | null;
+  company?: string | null;
+  role?: string | null;
+  interviewType?: string | null;
+};
+
 export default function DocumentsPage() {
   const router = useRouter();
   const backendBaseUrl = useMemo(getBackendBaseUrl, []);
-  const [company, setCompany] = useState("sk_hynix");
-  const [role, setRole] = useState("backend");
+  const [company, setCompany] = useState("");
+  const [role, setRole] = useState("");
   const [resumePdf, setResumePdf] = useState<File | null>(null);
   const [jobPostingPdf, setJobPostingPdf] = useState<File | null>(null);
+  const [parsedDocuments, setParsedDocuments] = useState<ParsedDocuments | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
-  const canSubmit = Boolean(resumePdf && jobPostingPdf && company && role);
+  const canParse = Boolean(resumePdf && jobPostingPdf);
+  const canCreateCourse = Boolean(parsedDocuments && company && role);
 
   useEffect(() => {
     if (!localStorage.getItem(ACCESS_TOKEN_KEY)) {
@@ -48,59 +59,89 @@ export default function DocumentsPage() {
     setAuthChecked(true);
   }, [router]);
 
-  const saveDocuments = (parsed: ParsedDocuments) => {
+  const saveDocuments = (parsed: ParsedDocuments, course?: CourseResponse) => {
     localStorage.setItem(
       DOCUMENT_STORAGE_KEY,
       JSON.stringify({
         resumeText: parsed.resumeText,
         jobPostingText: parsed.jobPostingText,
-        company: parsed.company ?? company,
-        role: parsed.role ?? role,
+        company,
+        role,
         resumeFileName: parsed.resumeFileName ?? resumePdf?.name,
         jobPostingFileName: parsed.jobPostingFileName ?? jobPostingPdf?.name,
         savedAt: new Date().toISOString(),
       })
     );
+
+    if (course) {
+      localStorage.setItem(
+        COURSE_STORAGE_KEY,
+        JSON.stringify({
+          courseId: course.id,
+          documentId: course.documentId,
+          company: course.company ?? company,
+          role: course.role ?? role,
+          interviewType: course.interviewType ?? "project_experience",
+          savedAt: new Date().toISOString(),
+        })
+      );
+    }
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleParseDocuments = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
 
-    if (!backendBaseUrl) {
-      setError("백엔드 주소가 설정되어 있지 않습니다. NEXT_PUBLIC_BACKEND_URL을 확인해 주세요.");
-      return;
-    }
-    if (!resumePdf || !jobPostingPdf) {
-      setError("이력서 PDF와 채용공고 PDF를 모두 선택해야 다음으로 넘어갑니다.");
-      return;
-    }
+    if (!backendBaseUrl || !resumePdf || !jobPostingPdf) return;
 
     setIsSubmitting(true);
     try {
       const formData = new FormData();
       formData.append("resumePdf", resumePdf);
       formData.append("jobPostingPdf", jobPostingPdf);
-      formData.append("company", company);
-      formData.append("role", role);
 
       const response = await fetch(`${backendBaseUrl}/api/sessions/documents/pdf`, {
         method: "POST",
         body: formData,
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail ?? `PDF 처리 실패: ${response.status}`);
-      }
 
-      saveDocuments((await response.json()) as ParsedDocuments);
-      router.push("/baseline");
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "PDF 처리 중 오류가 발생했습니다. 백엔드가 켜져 있는지 확인해 주세요."
-      );
+      const parsed = (await response.json()) as ParsedDocuments;
+
+      setParsedDocuments(parsed);
+      setCompany(parsed.company ?? "");
+      setRole(parsed.role ?? "");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateCourse = async () => {
+    if (!backendBaseUrl || !parsedDocuments) return;
+
+    setIsSubmitting(true);
+    try {
+      const courseResponse = await fetch(`${backendBaseUrl}/api/courses`, {
+        method: "POST",
+        headers: authHeaders({
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          company,
+          role,
+          interviewType: "project_experience",
+          resumeText: parsedDocuments.resumeText,
+          jobPostingText: parsedDocuments.jobPostingText,
+          sourceFileName: [
+            parsedDocuments.resumeFileName,
+            parsedDocuments.jobPostingFileName,
+          ]
+            .filter(Boolean)
+            .join(", "),
+        }),
+      });
+
+      saveDocuments(parsedDocuments, (await courseResponse.json()) as CourseResponse);
+      router.push("/guideline");
     } finally {
       setIsSubmitting(false);
     }
@@ -108,7 +149,8 @@ export default function DocumentsPage() {
 
   const skipForCameraTest = () => {
     localStorage.removeItem(DOCUMENT_STORAGE_KEY);
-    router.push("/baseline");
+    localStorage.removeItem(COURSE_STORAGE_KEY);
+    router.push("/guideline");
   };
 
   if (!authChecked) {
@@ -136,7 +178,7 @@ export default function DocumentsPage() {
 
         <section className="grid flex-1 items-center gap-8 py-10 lg:grid-cols-[1fr_420px]">
           <form
-            onSubmit={handleSubmit}
+            onSubmit={handleParseDocuments}
             className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
           >
             <div className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
@@ -148,8 +190,8 @@ export default function DocumentsPage() {
               이력서와 채용공고를 업로드하면 맞춤 면접 재료로 사용합니다.
             </h1>
             <p className="mt-3 text-sm leading-6 text-slate-600">
-              두 PDF를 모두 선택한 뒤 다음을 누르면 백엔드가 텍스트를 추출하고,
-              기준 측정 화면으로 넘어갑니다.
+              두 PDF를 모두 선택한 뒤 PDF 분석을 누르면 회사와 직무를 추출합니다.
+              추출된 값을 수정한 뒤 다음으로 넘어가세요.
             </p>
 
             <div className="mt-7 grid gap-4 md:grid-cols-2">
@@ -186,16 +228,27 @@ export default function DocumentsPage() {
               <Button type="button" variant="outline" onClick={skipForCameraTest}>
                 PDF 없이 화면 테스트
               </Button>
+
               <Button
                 type="submit"
-                disabled={isSubmitting || !canSubmit}
+                disabled={isSubmitting || !canParse}
                 className="bg-blue-600 px-6 font-semibold hover:bg-blue-700"
               >
                 {isSubmitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <ArrowRight className="h-4 w-4" />
+                  <FileText className="h-4 w-4" />
                 )}
+                PDF 분석
+              </Button>
+
+              <Button
+                type="button"
+                disabled={isSubmitting || !canCreateCourse}
+                onClick={handleCreateCourse}
+                className="bg-blue-600 px-6 font-semibold hover:bg-blue-700"
+              >
+                <ArrowRight className="h-4 w-4" />
                 다음
               </Button>
             </div>
@@ -208,7 +261,7 @@ export default function DocumentsPage() {
             <h2 className="mt-5 text-xl font-semibold">넘어가지 않는 경우</h2>
             <div className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
               <p>1. 이력서 PDF와 채용공고 PDF를 둘 다 선택해야 합니다.</p>
-              <p>2. 백엔드가 최신 코드로 재시작되어 있어야 합니다.</p>
+              <p>2. 먼저 PDF 분석을 눌러 회사와 직무를 확인해야 합니다.</p>
               <p>3. 스캔 이미지 PDF는 텍스트 추출이 안 될 수 있습니다.</p>
             </div>
           </aside>

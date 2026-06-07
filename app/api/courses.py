@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.db.database import get_db
-from app.db.models import Course, Document, Report, Session, User
+from app.db.models import CorrectionLoop, Course, Document, Report, Session, User
 from app.api.sessions import start_runtime_session
 from app.schemas.course import (
     CourseCreate,
@@ -19,6 +19,8 @@ from app.schemas.course import (
     CourseSessionStartCreate,
     CourseSessionStartResponse,
     CourseUpdate,
+    CorrectionLoopListResponse,
+    CorrectionLoopResponse,
     ReportCreate,
     ReportListResponse,
     ReportResponse,
@@ -39,16 +41,25 @@ FINAL_REPORT_METRIC_PATHS = [
     "nonverbal.gazeAwayRatio",
     "nonverbal.badPostureRatio",
     "nonverbal.fidgetingRatio",
+    "nonverbal.legShakingRatio",
     "audio.averageSpeakingRatio",
+    "audio.audioSignalChunkCount",
     "audio.totalSilenceMs",
     "audio.longSilenceCount",
     "content.averageAnswerLengthChars",
+    "content.starScore",
+    "content.specificityScore",
+    "content.jobFitScore",
+    "content.keywordCoverageScore",
+    "content.evidenceScore",
+    "content.relevanceScore",
 ]
 LOWER_IS_BETTER_METRICS = {
     "nonverbal.averageNonverbalRiskScore",
     "nonverbal.gazeAwayRatio",
     "nonverbal.badPostureRatio",
     "nonverbal.fidgetingRatio",
+    "nonverbal.legShakingRatio",
     "audio.totalSilenceMs",
     "audio.longSilenceCount",
 }
@@ -104,6 +115,25 @@ def _report_response(report: Report) -> ReportResponse:
         status=report.status,
         createdAt=report.created_at,
         updatedAt=report.updated_at,
+    )
+
+
+def _correction_loop_response(loop: CorrectionLoop) -> CorrectionLoopResponse:
+    return CorrectionLoopResponse(
+        id=loop.id,
+        courseId=loop.course_id,
+        userId=loop.user_id,
+        sourceSessionId=loop.source_session_id,
+        sourceReportId=loop.source_report_id,
+        loopIndex=loop.loop_index,
+        status=loop.status,
+        goals=loop.goals or [],
+        drills=loop.drills or [],
+        plan=loop.plan or {},
+        results=loop.results or [],
+        createdAt=loop.created_at,
+        updatedAt=loop.updated_at,
+        completedAt=loop.completed_at,
     )
 
 
@@ -522,6 +552,13 @@ async def start_course_session(
         company=course.company or "unknown",
         role=course.role or "general",
         interviewType=course.interview_type or "project_experience",
+        sessionType=payload.sessionType,
+        questionSetId="demo_5" if payload.sessionType == "baseline" else "full_13",
+        courseId=course_id,
+        sourceSessionId=payload.sourceSessionId,
+        drillId=payload.drillId,
+        drillTarget=payload.drillTarget,
+        initialQuestion=payload.initialQuestion,
         chunkMs=payload.chunkMs,
         cluster=payload.cluster,
         industry=payload.industry,
@@ -538,6 +575,9 @@ async def start_course_session(
             "cycleIndex": payload.cycleIndex,
             "drillIndex": payload.drillIndex,
             "targetPhase": target_phase,
+            "sourceSessionId": payload.sourceSessionId,
+            "drillId": payload.drillId,
+            "drillTarget": payload.drillTarget,
             "runtimeSource": "course_session_start",
         },
     )
@@ -636,6 +676,23 @@ async def list_course_reports(
     )
     return ReportListResponse(
         reports=[_report_response(report) for report in result.scalars().all()]
+    )
+
+
+@router.get("/courses/{course_id}/correction-loops", response_model=CorrectionLoopListResponse)
+async def list_course_correction_loops(
+    course_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_user_course(db=db, user_id=current_user.id, course_id=course_id)
+    result = await db.execute(
+        select(CorrectionLoop)
+        .where(CorrectionLoop.course_id == course_id, CorrectionLoop.user_id == current_user.id)
+        .order_by(CorrectionLoop.loop_index.asc(), CorrectionLoop.created_at.asc())
+    )
+    return CorrectionLoopListResponse(
+        loops=[_correction_loop_response(loop) for loop in result.scalars().all()]
     )
 
 

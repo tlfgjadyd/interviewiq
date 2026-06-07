@@ -189,6 +189,13 @@ export const drillPlan: Drill[] = [
 export const fallbackDrillPlan: DrillPlan = {
   planId: "plan_mock_structure_loop_1",
   sourceSessionId: "mock_baseline_session",
+  drillSet: {
+    loopIndex: 1,
+    totalDrills: 3,
+    status: "planned",
+    afterCompletion: "full_session",
+    nextActionLabel: "드릴 3개 완료 후 재측정 풀세션을 진행합니다.",
+  },
   drills: drillPlan.map((drill) => ({
     drillId: drill.drillId,
     title: drill.title,
@@ -271,7 +278,8 @@ export const getDrillById = (drillId: string) =>
   drillPlan.find((drill) => drill.drillId === drillId || drill.id === drillId);
 
 export const getDrillFromPlan = (plan: DrillPlan, step: number) => {
-  const item = plan.drills[Math.max(0, Math.min(step, plan.drills.length - 1))];
+  const planDrills = plan.drills.length ? plan.drills : fallbackDrillPlan.drills;
+  const item = planDrills[Math.max(0, Math.min(step, planDrills.length - 1))];
   const fallback = getDrill(step + 1);
   const localDrill = getDrillById(item?.drillId ?? "");
 

@@ -159,6 +159,7 @@ class AudioChunkMetadata(BaseModel):
     language: str | None = None
     browserTranscript: str | None = None
     browserLatestText: str | None = None
+    realtimeAudioSignals: RealtimeAudioSignals | None = None
 
 
 class SpeechSegment(BaseModel):

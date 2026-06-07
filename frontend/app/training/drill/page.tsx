@@ -19,7 +19,9 @@ function DrillPlanContent() {
     <InterviewRuntimeProvider
       config={{
         sessionType: "drill",
+        courseId: plan.courseId,
         sourceSessionId: plan.sourceSessionId,
+        drillIndex: safeStep + 1,
         drillId: drill.drillId,
         drillTarget: drill.target,
         maxAnswerSec: 90,
@@ -27,7 +29,7 @@ function DrillPlanContent() {
         initialQuestion: drill.question,
       }}
     >
-      <DrillPlayer drill={drill} planId={plan.planId} step={safeStep} />
+      <DrillPlayer drill={drill} plan={plan} planId={plan.planId} step={safeStep} />
     </InterviewRuntimeProvider>
   );
 }

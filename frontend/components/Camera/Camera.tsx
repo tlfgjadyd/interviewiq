@@ -1,6 +1,7 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Activity, Eye, Hand } from "lucide-react";
 import { useInterviewSession } from "@/context/InterviewSessionContext";
+import { authHeaders } from "@/lib/session-api";
 import { useCamera } from "../../hooks/useCamera";
 import { useMediapipe } from "../../hooks/useMediaPipe";
 
@@ -19,16 +20,167 @@ const Camera: React.FC<CameraProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioTimerRef = useRef<number | null>(null);
+  const audioSampleTimerRef = useRef<number | null>(null);
+  const audioSamplesRef = useRef<Array<{ rms: number; peak: number; speaking: boolean }>>([]);
+  const audioChunkIndexRef = useRef(0);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const uploadedSessionRef = useRef<string | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const [panelPosition, setPanelPosition] = useState<{
     x: number;
     y: number;
   } | null>(null);
-  const { backendBaseUrl, session, isAnswerRecording, setLatestVision } =
+  const { backendBaseUrl, session, isAnswerRecording, setLatestVision, setLatestAudioSignal } =
     useInterviewSession();
 
   useCamera(videoRef);
+
+  useEffect(() => {
+    if (!session || session.status !== "active" || recorderRef.current) {
+      return;
+    }
+
+    let attempts = 0;
+    const startRecorder = () => {
+      attempts += 1;
+      const stream = videoRef.current?.srcObject;
+      if (!(stream instanceof MediaStream)) {
+        if (attempts < 20) {
+          window.setTimeout(startRecorder, 250);
+        }
+        return;
+      }
+      if (typeof MediaRecorder === "undefined") {
+        console.warn("[session-video-recorder-unavailable]");
+        return;
+      }
+
+      try {
+        const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+          ? "video/webm;codecs=vp8"
+          : "video/webm";
+        const recorder = new MediaRecorder(stream, { mimeType });
+        chunksRef.current = [];
+        recordingStartedAtRef.current = performance.now();
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            chunksRef.current.push(event.data);
+          }
+        };
+        recorder.start(1000);
+        recorderRef.current = recorder;
+        console.info("[session-video-recording-started]", session.sessionId);
+      } catch (error) {
+        console.warn("[session-video-recording-start-failed]", error);
+      }
+    };
+
+    startRecorder();
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || session.status !== "finished") {
+      return;
+    }
+    if (uploadedSessionRef.current === session.sessionId) {
+      return;
+    }
+
+    const recorder = recorderRef.current;
+    if (!recorder) {
+      return;
+    }
+
+    uploadedSessionRef.current = session.sessionId;
+    recorderRef.current = null;
+    const stoppedAt = performance.now();
+    const startedAt = recordingStartedAtRef.current ?? stoppedAt;
+
+    recorder.onstop = async () => {
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "video/webm" });
+      chunksRef.current = [];
+      if (!blob.size) {
+        console.warn("[session-video-empty]");
+        return;
+      }
+
+      try {
+        const durationMs = Math.max(0, Math.round(stoppedAt - startedAt));
+        const uploadResponse = await fetch(
+          `${backendBaseUrl}/api/sessions/${session.sessionId}/assets/upload-url`,
+          {
+            method: "POST",
+            headers: authHeaders({
+              "Content-Type": "application/json",
+            }),
+            body: JSON.stringify({
+              assetType: "session_video",
+              mimeType: blob.type || "video/webm",
+              fileSizeBytes: blob.size,
+              durationMs,
+              extension: "webm",
+            }),
+          }
+        );
+        if (!uploadResponse.ok) {
+          throw new Error(`upload-url failed: ${uploadResponse.status}`);
+        }
+
+        const upload = (await uploadResponse.json()) as {
+          assetId: string;
+          objectKey: string;
+          uploadUrl: string;
+        };
+        const putResponse = await fetch(upload.uploadUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": blob.type || "video/webm",
+          },
+          body: blob,
+        });
+        if (!putResponse.ok) {
+          throw new Error(`R2 upload failed: ${putResponse.status}`);
+        }
+
+        const completeResponse = await fetch(
+          `${backendBaseUrl}/api/sessions/${session.sessionId}/assets/complete`,
+          {
+            method: "POST",
+            headers: authHeaders({
+              "Content-Type": "application/json",
+            }),
+            body: JSON.stringify({
+              assetId: upload.assetId,
+              objectKey: upload.objectKey,
+              mimeType: blob.type || "video/webm",
+              fileSizeBytes: blob.size,
+              durationMs,
+              status: "uploaded",
+            }),
+          }
+        );
+        if (!completeResponse.ok) {
+          throw new Error(`asset complete failed: ${completeResponse.status}`);
+        }
+        console.info("[session-video-uploaded]", session.sessionId);
+      } catch (error) {
+        console.warn("[session-video-upload-failed]", error);
+      }
+    };
+
+    try {
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      }
+    } catch (error) {
+      console.warn("[session-video-recording-stop-failed]", error);
+    }
+  }, [backendBaseUrl, session]);
 
   const {
     handPresence,
@@ -50,6 +202,134 @@ const Camera: React.FC<CameraProps> = ({
     },
     onVisionAnalysis: setLatestVision,
   });
+
+  useEffect(() => {
+    if (!session || session.status !== "active" || !isAnswerRecording) {
+      if (audioTimerRef.current) window.clearInterval(audioTimerRef.current);
+      if (audioSampleTimerRef.current) window.clearInterval(audioSampleTimerRef.current);
+      audioTimerRef.current = null;
+      audioSampleTimerRef.current = null;
+      audioSamplesRef.current = [];
+      setLatestAudioSignal(null);
+      return;
+    }
+
+    let attempts = 0;
+    const startAudioAnalysis = () => {
+      attempts += 1;
+      const stream = videoRef.current?.srcObject;
+      if (!(stream instanceof MediaStream) || !stream.getAudioTracks().length) {
+        if (attempts < 20) window.setTimeout(startAudioAnalysis, 250);
+        return;
+      }
+      if (audioContextRef.current) return;
+
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+
+      const audioContext = new AudioContextClass();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      audioContextRef.current = audioContext;
+      audioSamplesRef.current = [];
+      audioChunkIndexRef.current = 0;
+      const data = new Uint8Array(analyser.fftSize);
+      const answerStartedAt = session.turnStartedAtMs;
+
+      audioSampleTimerRef.current = window.setInterval(() => {
+        analyser.getByteTimeDomainData(data);
+        let sumSquares = 0;
+        let peak = 0;
+        for (const value of data) {
+          const normalized = (value - 128) / 128;
+          sumSquares += normalized * normalized;
+          peak = Math.max(peak, Math.abs(normalized));
+        }
+        const rms = Math.sqrt(sumSquares / data.length);
+        const speaking = rms >= 0.018;
+        audioSamplesRef.current.push({
+          rms,
+          peak,
+          speaking,
+        });
+        setLatestAudioSignal({
+          rmsVolume: rms,
+          peakVolume: peak,
+          isSpeakingRatio: speaking ? 1 : 0,
+          silenceDurationMs: speaking ? 0 : 100,
+          volumeWarning: rms < 0.01 ? "too_low" : rms > 0.28 ? "too_high" : "normal",
+          paceHint: "normal",
+          measuredAtMs: performance.now(),
+        });
+      }, 100);
+
+      audioTimerRef.current = window.setInterval(() => {
+        const samples = audioSamplesRef.current;
+        audioSamplesRef.current = [];
+        if (!samples.length) return;
+
+        const speakingCount = samples.filter((sample) => sample.speaking).length;
+        const isSpeakingRatio = speakingCount / samples.length;
+        const rmsVolume =
+          samples.reduce((sum, sample) => sum + sample.rms, 0) / samples.length;
+        const peakVolume = Math.max(...samples.map((sample) => sample.peak));
+        const silenceDurationMs = Math.round((1 - isSpeakingRatio) * (session.chunkMs || 5000));
+        const chunkIndex = audioChunkIndexRef.current + 1;
+        audioChunkIndexRef.current = chunkIndex;
+        const elapsed = Math.max(0, Math.round(performance.now() - answerStartedAt));
+        const t1 = elapsed;
+        const t0 = Math.max(0, t1 - (session.chunkMs || 5000));
+        const paceHint =
+          isSpeakingRatio < 0.25 ? "slow" : isSpeakingRatio > 0.9 ? "fast" : "normal";
+        const volumeWarning =
+          rmsVolume < 0.01 ? "too_low" : rmsVolume > 0.28 ? "too_high" : "normal";
+        const formData = new FormData();
+        const silentBlob = new Blob([new Uint8Array(1)], { type: "audio/webm" });
+        formData.append("audio", silentBlob, `audio_${chunkIndex}.webm`);
+        formData.append(
+          "metadata",
+          JSON.stringify({
+            chunkId: `audio_${String(chunkIndex).padStart(3, "0")}`,
+            answerTurnId: session.answerTurnId,
+            t0,
+            t1,
+            mimeType: "audio/webm",
+            language: "ko-KR",
+            realtimeAudioSignals: {
+              rmsVolume,
+              peakVolume,
+              isSpeakingRatio,
+              silenceDurationMs,
+              volumeWarning,
+              paceHint,
+            },
+          })
+        );
+
+        fetch(`${backendBaseUrl}/api/sessions/${session.sessionId}/audio-chunks`, {
+          method: "POST",
+          body: formData,
+        }).catch((error) => console.warn("[audio-chunk-send-failed]", error));
+      }, session.chunkMs || 5000);
+    };
+
+    startAudioAnalysis();
+
+    return () => {
+      if (audioTimerRef.current) window.clearInterval(audioTimerRef.current);
+      if (audioSampleTimerRef.current) window.clearInterval(audioSampleTimerRef.current);
+      audioTimerRef.current = null;
+      audioSampleTimerRef.current = null;
+      audioSamplesRef.current = [];
+      setLatestAudioSignal(null);
+      audioContextRef.current?.close().catch(() => undefined);
+      audioContextRef.current = null;
+    };
+  }, [backendBaseUrl, isAnswerRecording, session, setLatestAudioSignal]);
 
   const states = [
     ["손", isHandOnScreenRef.current ? "주의" : "정상", isHandOnScreenRef.current],
