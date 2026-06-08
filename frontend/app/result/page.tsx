@@ -10,14 +10,18 @@ import {
   BarChart3,
   CheckCircle2,
   Clock3,
+  Eye,
   GitCompare,
   Info,
   LineChart,
+  Mic,
   PlayCircle,
   RotateCcw,
+  ShieldCheck,
   Target,
   TrendingDown,
   TrendingUp,
+  UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +30,7 @@ import {
   getReport,
   getSessionAssets,
   persistDrillPlan,
+  type CourseReportResponse,
 } from "@/lib/session-api";
 import type {
   AnalysisTimelineSegment,
@@ -636,11 +641,298 @@ function InsightPanel({
   );
 }
 
+type ProgressMetric = {
+  label: string;
+  description: string;
+  icon: typeof ShieldCheck;
+  path: string;
+  color: string;
+};
+
+const progressMetrics: ProgressMetric[] = [
+  {
+    label: "종합 안정성",
+    description: "전반적인 전달의 안정성",
+    icon: ShieldCheck,
+    path: "scoreSummary.totalScore",
+    color: "bg-blue-600",
+  },
+  {
+    label: "시선 안정성",
+    description: "시선의 집중도와 일관성",
+    icon: Eye,
+    path: "nonverbal.gazeAwayRatio",
+    color: "bg-emerald-500",
+  },
+  {
+    label: "말속도 안정성",
+    description: "적절한 말하기 속도 유지",
+    icon: Mic,
+    path: "audio.averageSpeakingRatio",
+    color: "bg-violet-500",
+  },
+  {
+    label: "답변 구조",
+    description: "논리적 구성과 전달력",
+    icon: UserRound,
+    path: "content.starScore",
+    color: "bg-orange-500",
+  },
+];
+
+const getMetricPath = (metrics: Record<string, unknown>, path: string) => {
+  if (typeof metrics[path] === "number") return metrics[path] as number;
+  let current: unknown = metrics;
+  for (const part of path.split(".")) {
+    if (!current || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return typeof current === "number" && Number.isFinite(current) ? current : undefined;
+};
+
+const scoreFromPath = (metrics: Record<string, unknown>, path: string) => {
+  const value = getMetricPath(metrics, path);
+  if (value === undefined) return undefined;
+  if (path.includes("Ratio")) return clamp(Math.round(100 - value * 100));
+  if (path === "audio.averageSpeakingRatio") {
+    return clamp(Math.round(value <= 1 ? value * 100 : value));
+  }
+  return clamp(Math.round(value));
+};
+
+const courseReportScore = (report: CourseReportResponse) => {
+  const explicit = scoreFromPath(report.metrics, "scoreSummary.totalScore");
+  if (explicit !== undefined) return explicit;
+  const scores = progressMetrics
+    .map((metric) => scoreFromPath(report.metrics, metric.path))
+    .filter((value): value is number => value !== undefined);
+  if (!scores.length) return undefined;
+  return Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length);
+};
+
+const progressLabel = (report: CourseReportResponse, index: number) => {
+  if (report.reportType === "baseline_report") return "Baseline";
+  return index === 0 ? "Baseline" : `Recheck ${index}`;
+};
+
+function CorrectionProgressPanel({
+  reports,
+  report,
+  currentSessionId,
+}: {
+  reports: CourseReportResponse[];
+  report: InterviewReport;
+  currentSessionId: string | null;
+}) {
+  const fullReports = reports
+    .filter((item) => ["baseline_report", "full_report"].includes(item.reportType))
+    .sort((a, b) => {
+      const left = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const right = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return left - right;
+    });
+  const currentReportIndex = currentSessionId
+    ? fullReports.findIndex((item) => item.sessionId === currentSessionId)
+    : -1;
+  const activeReports =
+    currentReportIndex >= 0 ? fullReports.slice(0, currentReportIndex + 1) : fullReports;
+  const points = activeReports.map((item, index) => ({
+    report: item,
+    label: progressLabel(item, index),
+    score: courseReportScore(item),
+  }));
+  const firstScore = points[0]?.score;
+  const latestScore = points[points.length - 1]?.score;
+  const totalDelta =
+    firstScore !== undefined && latestScore !== undefined
+      ? latestScore - firstScore
+      : undefined;
+  const currentStage = points.length <= 1 ? "Baseline" : points[points.length - 1].label;
+  const currentStep = Math.max(1, Math.min(7, points.length * 2 - 1));
+
+  if (points.length < 2) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold">기준 세션 생성 완료</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              이 결과는 첫 풀세션 기준값입니다. 아직 재점검 세션이 없어 개선 추이는 표시하지 않습니다.
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-xs text-slate-500">현재 단계</p>
+            <p className="mt-1 text-sm font-bold">Baseline</p>
+          </div>
+        </div>
+        <div className="mt-5 rounded-lg bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+          다음 단계에서 교정 목표를 설정하고, 드릴 이후 Recheck 결과부터 개선 추이를 비교합니다.
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1.3fr)_420px]">
+        <div>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold">교정 루프 개선 추이</h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Baseline과 재점검 풀세션들의 전달 안정성 점수를 비교합니다.
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <p className="text-xs text-slate-500">현재 단계</p>
+              <p className="mt-1 text-sm font-bold">{currentStage}</p>
+            </div>
+          </div>
+
+          {points.length ? (
+            <div className="mt-8">
+              <div className="h-64 rounded-lg bg-white">
+                <div className="grid h-full grid-rows-[1fr_auto]">
+                  <div className="relative border-b border-slate-200">
+                    {[0, 20, 40, 60, 80, 100].map((tick) => (
+                      <div
+                        key={tick}
+                        className="absolute left-0 right-0 border-t border-dashed border-slate-200"
+                        style={{ bottom: `${tick}%` }}
+                      >
+                        <span className="absolute -left-1 -top-3 text-xs text-slate-400">
+                          {tick}
+                        </span>
+                      </div>
+                    ))}
+                    <svg className="absolute inset-0 h-full w-full overflow-visible">
+                      <polyline
+                        fill="none"
+                        stroke="#2563eb"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        points={points
+                          .map((point, index) => {
+                            const x =
+                              points.length === 1
+                                ? 50
+                                : 8 + (index / (points.length - 1)) * 84;
+                            const y = 100 - (point.score ?? 0);
+                            return `${x}%,${y}%`;
+                          })
+                          .join(" ")}
+                      />
+                      {points.map((point, index) => {
+                        const x =
+                          points.length === 1
+                            ? 50
+                            : 8 + (index / (points.length - 1)) * 84;
+                        const y = 100 - (point.score ?? 0);
+                        return (
+                          <g key={point.report.id}>
+                            <circle cx={`${x}%`} cy={`${y}%`} r="6" fill="#2563eb" />
+                            <text
+                              x={`${x}%`}
+                              y={`${Math.max(6, y - 8)}%`}
+                              textAnchor="middle"
+                              className="fill-slate-900 text-xs font-bold"
+                            >
+                              {point.score ?? "-"}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                  <div className="mt-3 grid" style={{ gridTemplateColumns: `repeat(${points.length}, minmax(0, 1fr))` }}>
+                    {points.map((point) => (
+                      <div key={point.report.id} className="text-center">
+                        <p className="text-xs font-bold text-slate-600">{point.label}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {point.score ?? "-"}점
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-6 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
+              비교할 course report가 아직 없습니다.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-5 grid grid-cols-[1fr_1.4fr] gap-3 rounded-lg border border-slate-200 p-4">
+            <div>
+              <p className="text-xs text-slate-500">전체 진행률</p>
+              <p className="mt-1 text-sm font-bold">{currentStep} / 7</p>
+            </div>
+            <div className="flex items-center">
+              <div className="h-2 w-full rounded-full bg-slate-200">
+                <div
+                  className="h-2 rounded-full bg-blue-600"
+                  style={{ width: `${(currentStep / 7) * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <h3 className="text-sm font-bold">전체 점수에 반영된 요소</h3>
+          <div className="mt-4 space-y-4">
+            {progressMetrics.map((metric) => {
+              const Icon = metric.icon;
+              const first = activeReports[0]
+                ? scoreFromPath(activeReports[0].metrics, metric.path)
+                : undefined;
+              const latest = activeReports[activeReports.length - 1]
+                ? scoreFromPath(activeReports[activeReports.length - 1].metrics, metric.path)
+                : undefined;
+              const delta =
+                first !== undefined && latest !== undefined ? latest - first : undefined;
+              const width = latest ?? report.totalScore;
+
+              return (
+                <article key={metric.path} className="grid grid-cols-[44px_1fr_44px] items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-blue-600">
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-bold">{metric.label}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">{metric.description}</p>
+                      </div>
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-slate-200">
+                      <div
+                        className={`h-2 rounded-full ${metric.color}`}
+                        style={{ width: `${clamp(width)}%` }}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-right text-sm font-bold text-slate-800">
+                    {delta === undefined ? "-" : `${delta > 0 ? "+" : ""}${delta}`}
+                  </p>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ResultContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("sessionId");
   const videoRef = useRef<HTMLVideoElement>(null);
   const [report, setReport] = useState<InterviewReport | null>(null);
+  const [courseReports, setCourseReports] = useState<CourseReportResponse[]>([]);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoStatus, setVideoStatus] = useState("영상 저장 상태를 확인하고 있습니다.");
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
@@ -666,12 +958,13 @@ function ResultContent() {
   }, [sessionId]);
 
   useEffect(() => {
-    if (!report?.recommendedPlan.courseId || !sessionId || report.comparison) {
+    if (!report?.recommendedPlan.courseId || !sessionId) {
       return;
     }
     getCourseReports(report.recommendedPlan.courseId).then((reports) => {
+      setCourseReports(reports);
       const current = reports.find((item) => item.sessionId === sessionId);
-      if (!current?.comparison) return;
+      if (report.comparison || !current?.comparison) return;
       setReport((existing) =>
         existing ? { ...existing, comparison: current.comparison } : existing
       );
@@ -826,8 +1119,16 @@ function ResultContent() {
           <InsightPanel report={report} segments={timeline} drillHref={drillHref} />
         </section>
 
+        <section className="mt-4">
+          <CorrectionProgressPanel
+            reports={courseReports}
+            report={report}
+            currentSessionId={sessionId}
+          />
+        </section>
+
         <section className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr]">
-          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="hidden">
             <div className="flex items-center gap-2">
               <BarChart3 className="h-5 w-5 text-blue-600" />
               <h2 className="text-lg font-semibold">세부 평가 항목</h2>
@@ -843,24 +1144,6 @@ function ResultContent() {
                   </div>
                   <p className="mt-3 text-sm leading-6 text-slate-600">
                     {metric.summary}
-                  </p>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2">
-              <Target className="h-5 w-5 text-blue-600" />
-              <h2 className="text-lg font-semibold">추천 교정 드릴</h2>
-            </div>
-            <div className="mt-4 grid gap-3">
-              {report.recommendedPlan.drills.map((drill, index) => (
-                <article key={drill.drillId} className="rounded-lg border border-slate-200 p-4">
-                  <p className="text-xs font-bold text-blue-600">드릴 {index + 1}</p>
-                  <h3 className="mt-1 font-semibold">{drill.title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    {drill.instruction}
                   </p>
                 </article>
               ))}

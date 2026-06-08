@@ -11,6 +11,7 @@ import {
   ListChecks,
   Target,
   TrendingUp,
+  Trophy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { loadDrillPlan } from "@/lib/session-api";
@@ -29,7 +30,138 @@ type StoredTrainingPlan = {
   completedDrills: number[];
 };
 
-function GoalSummary({ plan }: { plan: DrillPlan }) {
+const correctionLoopSteps = [
+  {
+    label: "Baseline",
+    title: "초기 풀세션",
+    description: "기준 리포트 생성",
+  },
+  {
+    label: "Drill 1",
+    title: "시선 안정성",
+    description: "Q1~Q3 훈련",
+  },
+  {
+    label: "Recheck 1",
+    title: "개선 확인",
+    description: "풀세션 재점검",
+  },
+  {
+    label: "Drill 2",
+    title: "답변 구조",
+    description: "Q1~Q3 훈련",
+  },
+  {
+    label: "Recheck 2",
+    title: "2차 개선 확인",
+    description: "",
+  },
+  {
+    label: "Drill 3",
+    title: "말속도 안정성",
+    description: "Q1~Q3 훈련",
+  },
+  {
+    label: "Recheck 3",
+    title: "최종 재점검",
+    description: "",
+  },
+  {
+    label: "Final Report",
+    title: "전체 개선 추이",
+    description: "종합 리포트",
+  },
+];
+
+function CorrectionLoopOverview({ completedDrills }: { completedDrills: number }) {
+  const activeIndex = Math.min(6, 1 + completedDrills * 2);
+  const activeStep = correctionLoopSteps[activeIndex] ?? correctionLoopSteps[1];
+  const nextStep = correctionLoopSteps[activeIndex + 1];
+
+  return (
+    <section className="mt-6 border-t border-slate-200 pt-5">
+      <div>
+        <h2 className="text-lg font-bold text-slate-950">3회 교정 루프</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          초기 풀세션 결과를 기준으로 드릴과 재점검을 반복하며 전달 안정성을 개선합니다.
+        </p>
+      </div>
+
+      <div className="mt-6 grid grid-cols-[repeat(8,minmax(0,1fr))] items-start gap-3 max-lg:grid-cols-4 max-sm:grid-cols-2">
+        {correctionLoopSteps.map((step, index) => {
+          const isDone = index < activeIndex;
+          const isActive = index === activeIndex;
+          const isFinal = index === correctionLoopSteps.length - 1;
+
+          return (
+            <div key={step.label} className="relative text-center">
+              {index < correctionLoopSteps.length - 1 ? (
+                <div
+                  className={`absolute left-1/2 top-[38px] h-px w-full max-lg:hidden ${
+                    isDone ? "bg-blue-500" : "bg-slate-200"
+                  }`}
+                />
+              ) : null}
+              <div className="relative z-10 mx-auto flex h-12 w-12 items-center justify-center">
+                <div
+                  className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                    isActive
+                      ? "bg-blue-600 text-white ring-4 ring-blue-100"
+                      : isDone
+                        ? "bg-slate-800 text-white"
+                        : isFinal
+                          ? "border border-slate-200 bg-slate-50 text-slate-600"
+                          : "bg-slate-200 text-slate-500"
+                  }`}
+                >
+                  {isFinal ? <Trophy className="h-4 w-4" /> : isDone ? "✓" : index + 1}
+                </div>
+              </div>
+              <p
+                className={`mt-1 text-sm font-bold ${
+                  isActive ? "text-blue-600" : "text-slate-900"
+                }`}
+              >
+                {step.label}
+              </p>
+              <p
+                className={`mt-2 text-xs font-semibold ${
+                  isActive ? "text-blue-600" : "text-slate-600"
+                }`}
+              >
+                {step.title}
+              </p>
+              {step.description ? (
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {step.description}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 flex items-center justify-between gap-4 rounded-lg bg-blue-50 px-4 py-3 max-sm:flex-col max-sm:items-start">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-600">
+            <Target className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-slate-950">현재 단계: {activeStep.label}</p>
+            <p className="mt-1 text-xs text-slate-600">
+              {activeStep.title} 단계입니다.
+            </p>
+          </div>
+        </div>
+        {nextStep ? (
+          <p className="text-sm font-bold text-blue-600">다음 단계: {nextStep.label}</p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function GoalSummary({ plan, completedDrills }: { plan: DrillPlan; completedDrills: number }) {
   const primary = plan.drills[0];
   const secondary = plan.drills[1];
   const primaryTarget = primary?.target ?? "answer_structure";
@@ -65,6 +197,7 @@ function GoalSummary({ plan }: { plan: DrillPlan }) {
           ) : null}
         </div>
       </div>
+      <CorrectionLoopOverview completedDrills={completedDrills} />
     </header>
   );
 }
@@ -103,6 +236,7 @@ function TrainingGoalContent() {
   const planId = searchParams.get("planId");
   const plan = useMemo(() => loadDrillPlan(planId), [planId]);
   const [isSaved, setIsSaved] = useState(false);
+  const [completedDrillCount, setCompletedDrillCount] = useState(0);
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -110,8 +244,12 @@ function TrainingGoalContent() {
     try {
       const stored = JSON.parse(raw) as StoredTrainingPlan;
       setIsSaved(stored.planId === plan.planId);
+      setCompletedDrillCount(
+        stored.planId === plan.planId ? stored.completedDrills.length : 0
+      );
     } catch {
       setIsSaved(false);
+      setCompletedDrillCount(0);
     }
   }, [plan.planId]);
 
@@ -155,7 +293,7 @@ function TrainingGoalContent() {
         </nav>
 
         <section className="mt-4">
-          <GoalSummary plan={plan} />
+          <GoalSummary plan={plan} completedDrills={completedDrillCount} />
         </section>
 
         <section className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">

@@ -204,7 +204,7 @@ export default function BaselinePage() {
           </div>
           <div className="flex items-center gap-3">
             <span className="h-8 w-8 rounded-full bg-slate-300" />
-            <span className="font-semibold">김민준</span>
+            <span className="font-semibold">신제민</span>
             <ChevronDown className="h-4 w-4 text-slate-500" />
           </div>
         </div>

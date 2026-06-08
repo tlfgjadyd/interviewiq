@@ -113,6 +113,8 @@ export type CourseReportResponse = {
   comparison: ReportComparison & Record<string, unknown>;
   recommendations: Record<string, unknown>;
   status: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type CorrectionLoopResponse = {
