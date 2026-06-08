@@ -237,6 +237,7 @@ export const InterviewSessionProvider = ({
           ...payload,
           courseId: payload?.courseId ?? storedCourse?.courseId,
         };
+        let usedCourseSessionStart = Boolean(requestPayload.courseId);
         let response = requestPayload.courseId
           ? await fetch(
               `${backendBaseUrl}/api/courses/${requestPayload.courseId}/sessions/start`,
@@ -274,6 +275,7 @@ export const InterviewSessionProvider = ({
           [401, 404].includes(response.status)
         ) {
           console.warn("[drill-course-session-start-fallback]", response.status);
+          usedCourseSessionStart = false;
           response = await fetch(`${backendBaseUrl}/api/sessions`, {
             method: "POST",
             headers: {
@@ -288,10 +290,10 @@ export const InterviewSessionProvider = ({
         }
 
         const rawData = await response.json();
-        const data = requestPayload.courseId
+        const data = usedCourseSessionStart
           ? ((rawData as CourseSessionStartResponse).runtime as SessionCreateResponse)
           : (rawData as SessionCreateResponse);
-        const dbSession = requestPayload.courseId
+        const dbSession = usedCourseSessionStart
           ? (rawData as CourseSessionStartResponse).session
           : null;
 
