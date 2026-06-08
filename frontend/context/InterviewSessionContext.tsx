@@ -181,10 +181,17 @@ const InterviewSessionContext =
   createContext<InterviewSessionContextValue | null>(null);
 
 const getBackendBaseUrl = () => {
-  return (
-    process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") ??
-    ""
-  );
+  const configured = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
+  if (configured) {
+    return configured;
+  }
+  if (
+    typeof window !== "undefined" &&
+    ["localhost", "127.0.0.1"].includes(window.location.hostname)
+  ) {
+    return "http://127.0.0.1:8000";
+  }
+  return "";
 };
 
 const createTimeoutSignal = (timeoutMs: number) => {
@@ -230,7 +237,7 @@ export const InterviewSessionProvider = ({
           ...payload,
           courseId: payload?.courseId ?? storedCourse?.courseId,
         };
-        const response = requestPayload.courseId
+        let response = requestPayload.courseId
           ? await fetch(
               `${backendBaseUrl}/api/courses/${requestPayload.courseId}/sessions/start`,
               {
@@ -260,6 +267,21 @@ export const InterviewSessionProvider = ({
               },
               body: JSON.stringify(requestPayload),
             });
+
+        if (
+          requestPayload.sessionType === "drill" &&
+          requestPayload.courseId &&
+          [401, 404].includes(response.status)
+        ) {
+          console.warn("[drill-course-session-start-fallback]", response.status);
+          response = await fetch(`${backendBaseUrl}/api/sessions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestPayload),
+          });
+        }
 
         if (!response.ok) {
           throw new Error(`Failed to create session: ${response.status}`);

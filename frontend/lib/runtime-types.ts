@@ -145,6 +145,8 @@ export type StartSessionRequest = {
   drillTarget?: DrillTarget;
   maxAnswerSec: number;
   totalQuestions: number;
+  initialQuestion?: string;
+  initialQuestionMeta?: RuntimeQuestionMeta;
 };
 
 export type AnswerState = {

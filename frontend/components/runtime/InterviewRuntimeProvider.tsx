@@ -206,6 +206,10 @@ const InterviewRuntimeBridge = ({
         config.sessionType === "drill" ? config.drillTarget : undefined,
       maxAnswerSec: config.maxAnswerSec,
       totalQuestions,
+      initialQuestion:
+        config.sessionType === "drill" ? config.initialQuestion : undefined,
+      initialQuestionMeta:
+        config.sessionType === "drill" ? config.initialQuestionMeta : undefined,
     };
   }, [config]);
 
