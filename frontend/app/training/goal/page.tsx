@@ -14,7 +14,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { loadDrillPlan } from "@/lib/session-api";
-import type { DrillItem, DrillPlan, DrillTarget } from "@/lib/runtime-types";
+import type { DrillItem, DrillPlan } from "@/lib/runtime-types";
+import {
+  metricValueText,
+  targetDescription,
+  targetLabel,
+} from "@/lib/product-language";
 
 const STORAGE_KEY = "interviewiq-training-plan";
 
@@ -23,41 +28,6 @@ type StoredTrainingPlan = {
   acceptedAt: string;
   completedDrills: number[];
 };
-
-const targetLabels: Record<string, string> = {
-  gaze_stability: "시선 안정",
-  posture: "자세 안정",
-  fidget: "반복 움직임 줄이기",
-  leg_shaking: "하체 움직임 안정",
-  answer_structure: "답변 구조화",
-  specificity: "근거 구체화",
-  job_fit: "직무 연결 강화",
-};
-
-const targetDescriptions: Record<string, string> = {
-  gaze_stability: "답변 중 시선 이탈이 많았던 구간을 줄이는 것을 목표로 합니다.",
-  posture: "답변이 길어질 때 자세가 무너지는 구간을 안정화합니다.",
-  fidget: "손이나 상체의 반복 움직임을 줄여 전달 안정감을 높입니다.",
-  leg_shaking: "심층 질문 구간에서 하체 움직임을 줄이고 답변 리듬을 유지합니다.",
-  answer_structure: "상황, 역할, 행동, 결과가 보이도록 답변 순서를 정리합니다.",
-  specificity: "결과를 수치, 비교 기준, 사용자의 영향으로 구체화합니다.",
-  job_fit: "경험을 채용공고의 핵심 역량과 직접 연결합니다.",
-};
-
-const metricLabel = (metric?: string) => {
-  if (!metric) return "분석 지표";
-  if (metric.includes("legShaking")) return "하체 움직임";
-  if (metric.includes("gaze")) return "시선 이탈";
-  if (metric.includes("posture")) return "자세 흔들림";
-  if (metric.includes("fidget")) return "반복 움직임";
-  if (metric.includes("star")) return "STAR 구조";
-  if (metric.includes("specificity")) return "구체성";
-  if (metric.includes("jobFit")) return "직무 적합성";
-  return metric;
-};
-
-const targetLabel = (target?: DrillTarget | string | null) =>
-  targetLabels[String(target ?? "")] ?? "교정 목표";
 
 function GoalSummary({ plan }: { plan: DrillPlan }) {
   const primary = plan.drills[0];
@@ -86,9 +56,7 @@ function GoalSummary({ plan }: { plan: DrillPlan }) {
             {targetLabel(primaryTarget)}
           </p>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            {targetDescriptions[String(primaryTarget)] ??
-              primary?.instruction ??
-              "직전 세션에서 가장 약했던 구간을 우선 교정합니다."}
+            {targetDescription(primaryTarget) || primary?.instruction}
           </p>
           {secondary ? (
             <p className="mt-4 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">
@@ -108,7 +76,7 @@ function DrillCard({ drill, index }: { drill: DrillItem; index: number }) {
     <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold text-violet-600">Drill {index + 1}</p>
+          <p className="text-xs font-bold text-violet-600">드릴 {index + 1}</p>
           <h3 className="mt-1 text-base font-bold text-slate-950">
             {drill.title || targetLabel(drill.target)}
           </h3>
@@ -123,8 +91,7 @@ function DrillCard({ drill, index }: { drill: DrillItem; index: number }) {
       <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
         <p className="font-semibold text-slate-800">{drill.question}</p>
         <p className="mt-2 text-xs font-medium text-slate-500">
-          통과 기준: {metricLabel(metric?.metric)} {metric?.operator}{" "}
-          {String(metric?.threshold ?? "-")}
+          통과 기준: {metricValueText(metric?.metric, metric?.operator, metric?.threshold)}
         </p>
       </div>
     </article>
@@ -212,7 +179,7 @@ function TrainingGoalContent() {
               </div>
               <div className="mt-4 space-y-3">
                 {[
-                  "드릴 1개는 독립 drill session으로 저장됩니다.",
+                  "드릴 1개는 독립 드릴 세션으로 저장됩니다.",
                   "각 드릴 결과는 다음 목표 재산정에 사용됩니다.",
                   "드릴 3개 후 풀세션을 다시 진행해 개선률을 확인합니다.",
                 ].map((item) => (
@@ -239,7 +206,7 @@ function TrainingGoalContent() {
                 <h2 className="text-base font-bold">비교 기준</h2>
               </div>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                결과 리포트의 질문별 이벤트와 지표를 기준으로 같은 target의
+                결과 리포트의 질문별 이벤트와 지표를 기준으로 같은 교정 목표의
                 변화량을 비교합니다. 영상이 pending이어도 그래프와 드릴 목표는
                 저장된 분석값으로 확인할 수 있습니다.
               </p>

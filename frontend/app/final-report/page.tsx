@@ -11,6 +11,7 @@ import {
   getFinalReport,
   type CourseReportResponse,
 } from "@/lib/session-api";
+import { metricLabel, phaseLabel, targetLabel } from "@/lib/product-language";
 
 type MetricDelta = {
   current?: number;
@@ -130,7 +131,7 @@ function FinalReportContent() {
                     key={metric}
                     className="rounded-lg border border-slate-200 p-4 text-sm"
                   >
-                    <p className="font-medium text-slate-700">{metric}</p>
+                    <p className="font-medium text-slate-700">{metricLabel(metric)}</p>
                     <p className="mt-2 font-mono text-2xl font-semibold">
                       {String(value)}
                     </p>
@@ -148,7 +149,7 @@ function FinalReportContent() {
                       key={metric}
                       className="grid gap-2 rounded-lg border border-slate-200 p-3 text-sm md:grid-cols-[1fr_110px_110px_110px]"
                     >
-                      <span className="font-medium">{metric}</span>
+                      <span className="font-medium">{metricLabel(metric)}</span>
                       <span>현재 {value.current}</span>
                       <span>기준 {value.reference}</span>
                       <span
@@ -181,7 +182,7 @@ function FinalReportContent() {
                 <h2 className="text-base font-semibold">다음 교정 목표</h2>
               </div>
               <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700">
-                {nextTargetPhase ?? "아직 산정되지 않음"}
+                {nextTargetPhase ? phaseLabel(nextTargetPhase) : "아직 산정되지 않음"}
               </p>
               <div className="mt-4 space-y-2">
                 {focus.map((item) => (
@@ -190,7 +191,7 @@ function FinalReportContent() {
                     className="flex gap-2 rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700"
                   >
                     <CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-emerald-600" />
-                    {String(item)}
+                    {targetLabel(String(item))}
                   </p>
                 ))}
               </div>

@@ -19,6 +19,11 @@ import { BaselineFrameGuide } from "@/components/baseline/BaselineFrameGuide";
 import Camera from "@/components/Camera/Camera";
 import { useInterviewRuntime } from "@/components/runtime/InterviewRuntimeProvider";
 import { Button } from "@/components/ui/button";
+import {
+  metricValueText,
+  sessionStatusLabel,
+  targetLabel,
+} from "@/lib/product-language";
 import type { DrillPlan, DrillSessionResult } from "@/lib/runtime-types";
 import { drillPlan, type Drill } from "@/lib/training";
 
@@ -279,7 +284,7 @@ export const DrillPlayer = ({
                 </h1>
                 <div className="mt-5 inline-flex max-w-full items-center gap-2 rounded-xl border border-white/14 bg-slate-950/36 px-4 py-3 text-[clamp(14px,1vw,18px)] font-bold text-emerald-100 backdrop-blur">
                   <Target className="h-5 w-5 shrink-0" />
-                  <span className="truncate">{drill.focus}</span>
+                  <span className="truncate">{targetLabel(drill.target)}</span>
                 </div>
               </div>
 
@@ -349,7 +354,7 @@ export const DrillPlayer = ({
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
                   <CheckCircle2 className="h-4 w-4" />
-                  Drill session {latestResult?.runNo ?? currentRunNo - 1}
+                  드릴 결과 {latestResult?.runNo ?? currentRunNo - 1}
                 </div>
                 <h1 className="mt-3 text-3xl font-semibold">
                   {latestResult?.passed ? "이번 목표 통과" : "한 번 더 다듬기"}
@@ -377,7 +382,14 @@ export const DrillPlayer = ({
               />
               <MiniCheckCard
                 title="아직 부족한 지점"
-                body={drill.feedbackTemplate[0] ?? drill.passCriteria.metric}
+                body={
+                  drill.feedbackTemplate[0] ??
+                  metricValueText(
+                    drill.passCriteria.metric,
+                    drill.passCriteria.operator,
+                    drill.passCriteria.threshold
+                  )
+                }
               />
               <MiniCheckCard title="다음 시도 목표" body={drill.instruction} />
               <MiniCheckCard
@@ -424,7 +436,7 @@ export const DrillPlayer = ({
           </Button>
           <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
             <Clock3 className="h-4 w-4" />
-            Drill {currentStep + 1} / {planLength}
+            드릴 {currentStep + 1} / {planLength}
           </div>
         </nav>
 
@@ -433,13 +445,13 @@ export const DrillPlayer = ({
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
                 <Target className="h-4 w-4" />
-                Loop {plan?.drillSet?.loopIndex ?? 1} · Drill {currentStep + 1} of {planLength}
+                교정 루프 {plan?.drillSet?.loopIndex ?? 1} · 드릴 {currentStep + 1}/{planLength}
               </div>
               <h1 className="mt-3 text-2xl font-semibold leading-tight lg:text-3xl">
                 {drill.title}
               </h1>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                {drill.focus} · target: {drill.target}
+                {targetLabel(drill.target)}
               </p>
             </div>
             <div className="min-w-[260px]">
@@ -520,8 +532,11 @@ export const DrillPlayer = ({
             <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="text-base font-semibold">평가 기준</h2>
               <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 text-sm leading-6 text-slate-700">
-                {drill.passCriteria.metric} {drill.passCriteria.operator}{" "}
-                {drill.passCriteria.threshold}
+                {metricValueText(
+                  drill.passCriteria.metric,
+                  drill.passCriteria.operator,
+                  drill.passCriteria.threshold
+                )}
               </div>
               <div className="mt-4 space-y-3">
                 {drill.feedbackTemplate.map((item) => (
@@ -539,8 +554,8 @@ export const DrillPlayer = ({
             <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="text-base font-semibold">진행 상태</h2>
               <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <MetricBox label="session" value={session?.status ?? "idle"} />
-                <MetricBox label="drill session" value={String(currentRunNo)} />
+                <MetricBox label="세션 상태" value={sessionStatusLabel(session?.status)} />
+                <MetricBox label="현재 시도" value={`${currentRunNo}회차`} />
               </div>
               <Button
                 type="button"

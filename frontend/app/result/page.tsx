@@ -33,6 +33,7 @@ import type {
   InterviewReportMetric,
   InterviewReportQuestion,
 } from "@/lib/runtime-types";
+import { metricLabel as productMetricLabel } from "@/lib/product-language";
 
 const QUESTION_DURATION_MS = 90_000;
 
@@ -479,7 +480,7 @@ const displayMetricTitle = (metric: InterviewReportMetric) => {
   if (key.includes("nonverbal") || key.includes("비언어")) return "시선 안정성";
   if (key.includes("answer") || key.includes("답변")) return "답변 구조 안정성";
   if (key.includes("job") || key.includes("직무")) return "직무 적합성";
-  return metric.label;
+  return productMetricLabel(metric.metricKey ?? metric.label);
 };
 
 function ScorePanel({ report }: { report: InterviewReport }) {
@@ -885,7 +886,7 @@ function ResultContent() {
               {report.metrics.map((metric) => (
                 <article key={`${metric.metricKey ?? metric.label}-detail`} className="rounded-lg border border-slate-200 p-4">
                   <div className="flex items-center justify-between gap-3">
-                    <h3 className="font-semibold">{metric.label}</h3>
+                    <h3 className="font-semibold">{displayMetricTitle(metric)}</h3>
                     <span className={`font-mono text-2xl font-bold ${scoreTone(metric.score)}`}>
                       {metric.score}
                     </span>
@@ -906,7 +907,7 @@ function ResultContent() {
             <div className="mt-4 grid gap-3">
               {report.recommendedPlan.drills.map((drill, index) => (
                 <article key={drill.drillId} className="rounded-lg border border-slate-200 p-4">
-                  <p className="text-xs font-bold text-violet-600">Drill {index + 1}</p>
+                  <p className="text-xs font-bold text-violet-600">드릴 {index + 1}</p>
                   <h3 className="mt-1 font-semibold">{drill.title}</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     {drill.instruction}
