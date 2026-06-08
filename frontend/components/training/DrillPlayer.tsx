@@ -116,6 +116,14 @@ export const DrillPlayer = ({
     setCompletedDrills(plan.completedDrills);
   }, [planId]);
 
+
+  useEffect(() => {
+  setMode("ready");
+  setCountdown(COUNTDOWN_SECONDS);
+  setLastResult(null);
+  setCheckedItems([]);
+}, [currentStep, drill.drillId]);
+
   const beginCountdown = useCallback(async () => {
     if (!session || session.status === "finished") {
       await startSession();
@@ -133,9 +141,12 @@ export const DrillPlayer = ({
     const result = await endAnswer();
     if (result) {
       setLastResult(result);
+      setMode("miniCheck");
+      return;
     }
-    setMode("miniCheck");
-  }, [answerState.isRecording, endAnswer]);
+    startAnswer();
+    setMode("answering");
+  }, [answerState.isRecording, endAnswer, startAnswer]);
 
   useEffect(() => {
     if (mode !== "countdown") {
@@ -206,7 +217,7 @@ export const DrillPlayer = ({
       ? `/training/drill?planId=${encodeURIComponent(planId)}&step=${nextStep}`
       : nextLegacyDrill
       ? `/training/drill/${nextLegacyDrill}`
-      : "/interview?autoStart=1";
+      : "/guideline";
 
   const isCompleted = completedDrills.includes(drill.drillIndex);
 
@@ -245,8 +256,8 @@ export const DrillPlayer = ({
 
   if (mode === "answering") {
     return (
-      <main className="flex h-[100dvh] overflow-hidden bg-[#f7f8fb] p-5 text-slate-950">
-        <section className="min-h-0 flex-1 overflow-hidden rounded-[26px] border border-slate-200 bg-slate-950 shadow-xl shadow-slate-200">
+      <main className="flex h-[100dvh] overflow-hidden bg-[#f7f8fb] p-0 text-slate-950">
+        <section className="min-h-0 flex-1 overflow-hidden bg-slate-950">
           <div className="relative h-full min-h-0 overflow-hidden">
             <Image
               src="/images/ai-interviewer-room.png"
@@ -277,7 +288,7 @@ export const DrillPlayer = ({
 
               <div className="absolute left-[4.8%] top-[43%] z-10 max-w-[36%] -translate-y-1/2 text-white">
                 <p className="text-[clamp(18px,1.5vw,28px)] font-bold text-blue-300">
-                  드릴 질문
+                  Drill 질문
                 </p>
                 <h1 className="mt-4 break-keep text-[clamp(30px,3.35vw,60px)] font-bold leading-[1.12] tracking-normal drop-shadow-md">
                   {questionText}
@@ -318,7 +329,7 @@ export const DrillPlayer = ({
                 </div>
 
                 <div className="hidden min-w-[148px] text-sm font-bold text-white/82 md:block">
-                  Space 키로 종료
+                  침묵감지시 종료
                 </div>
 
                 <Button
@@ -331,11 +342,7 @@ export const DrillPlayer = ({
                 </Button>
               </div>
 
-              <div className="absolute bottom-[18%] left-[4.8%] z-20 flex max-w-[36%] flex-wrap gap-2 text-sm font-bold text-white">
-                <DetectionPill label="얼굴" state="정상" />
-                <DetectionPill label="손" state="정상" />
-                <DetectionPill label="무릎" state="정상" />
-              </div>
+              
 
               <Camera pipSize="large" />
             </div>

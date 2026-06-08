@@ -188,14 +188,14 @@ const InterviewRuntimeBridge = ({
 
   const startSessionPayload = useMemo<StartSessionRequest>(() => {
     const totalQuestions =
-      config.sessionType === "drill" ? 1 : config.totalQuestions ?? 12;
+      config.sessionType === "drill" ? 3 : config.totalQuestions ?? 12;
 
     return {
       sessionType: config.sessionType,
       courseId: config.courseId,
       questionSetId:
         config.sessionType === "full"
-          ? config.questionSetId ?? "full_13"
+          ? config.questionSetId ?? "full_12"
           : config.questionSetId,
       baselineId: config.baselineId,
       sourceSessionId:
@@ -385,15 +385,10 @@ const InterviewRuntimeBridge = ({
   const currentQuestionMeta =
     session?.currentQuestionMeta ?? config.initialQuestionMeta;
   const currentQuestion =
-    config.sessionType === "drill"
-      ? config.initialQuestion ??
-        currentQuestionMeta?.text ??
-        session?.currentQuestion ??
-        fallbackQuestionText
-      : session?.currentQuestion ??
-        currentQuestionMeta?.text ??
-        config.initialQuestion ??
-        fallbackQuestionText;
+  session?.currentQuestion ??
+  currentQuestionMeta?.text ??
+  config.initialQuestion ??
+  fallbackQuestionText;
 
   const value = useMemo<InterviewRuntimeContextValue>(
     () => ({

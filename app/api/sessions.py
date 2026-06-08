@@ -1930,63 +1930,6 @@ async def _save_session_report(
     return report
 
 
-async def _load_db_session_report_payload(session_id: str) -> dict[str, Any] | None:
-    if AsyncSessionLocal is None:
-        return None
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(DbReport)
-            .where(DbReport.session_id == session_id)
-            .order_by(DbReport.updated_at.desc())
-        )
-        db_report = result.scalars().first()
-        if db_report is None or not isinstance(db_report.metrics, dict):
-            return None
-
-        payload = db_report.metrics.get("fullReportPayload")
-        if isinstance(payload, dict):
-            payload["sessionId"] = payload.get("sessionId") or session_id
-            payload["reportId"] = payload.get("reportId") or db_report.id
-            payload["status"] = payload.get("status") or db_report.status or "ready"
-            return payload
-
-        score_summary = db_report.metrics.get("scoreSummary")
-        recommendations = (
-            db_report.recommendations
-            if isinstance(db_report.recommendations, dict)
-            else {}
-        )
-        recommended_plan = (
-            recommendations.get("recommendedPlan")
-            if isinstance(recommendations.get("recommendedPlan"), dict)
-            else {}
-        )
-        next_practice = (
-            recommendations.get("nextPractice")
-            if isinstance(recommendations.get("nextPractice"), dict)
-            else {}
-        )
-
-        if not isinstance(score_summary, dict) or not recommended_plan:
-            return None
-
-        return {
-            "sessionId": session_id,
-            "reportId": db_report.id,
-            "status": db_report.status or "ready",
-            "summary": db_report.summary or "",
-            "totalScore": score_summary.get("totalScore") or 0,
-            "displayMetrics": score_summary.get("displayMetrics") or [],
-            "weakPatterns": score_summary.get("weakPatterns") or [],
-            "recommendedPlan": recommended_plan,
-            "metrics": db_report.metrics,
-            "comparison": db_report.comparison or {},
-            "questions": [],
-            "nextPractice": next_practice,
-        }
-
-
 def _report_metrics_from_redis_report(report: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     metrics = report.get("metrics")
     if isinstance(metrics, dict):
@@ -2527,6 +2470,37 @@ async def _parse_document_pdfs(
         jobPostingFileName=job_posting_pdf.filename,
     )
     return payload, parsed
+    resume_text, job_posting_text = await asyncio.gather(
+        _extract_pdf_text(resume_pdf, "resume"),
+        _extract_pdf_text(job_posting_pdf, "jobPosting"),
+    )
+
+    inferred_company, inferred_role = _infer_company_and_role(
+        job_posting_text=job_posting_text,
+        job_posting_file_name=job_posting_pdf.filename,
+    )
+    final_company = company or inferred_company
+    final_role = role or inferred_role
+
+    payload = SessionDocumentsRequest(
+        resumeText=resume_text,
+        jobPostingText=job_posting_text,
+        company=company,
+        role=role,
+        company=final_company,
+        role=final_role,
+    )
+    parsed = SessionDocumentsPdfResponse(
+        status="parsed",
+        resumeText=resume_text,
+        jobPostingText=job_posting_text,
+        company=company,
+        role=role,
+        company=final_company,
+        role=final_role,
+        resumeFileName=resume_pdf.filename,
+        jobPostingFileName=job_posting_pdf.filename,
+    )
 
 
 async def _process_session_documents_payload(
@@ -2570,8 +2544,8 @@ async def _process_session_documents_payload(
     await client.expire(_session_rag_docs_key(session_id), REDIS_TTL_SECONDS)
 
     meta["hasSessionDocuments"] = True
-    meta["personalizedQuestion"] = personalized_question.text
-    meta["personalizedQuestionSource"] = personalized_question.source
+    meta["currentQuestion"] = personalized_question.text
+    meta["currentQuestionSource"] = personalized_question.source
     await _write_json(_session_meta_key(session_id), meta)
 
     return SessionDocumentsResponse(
@@ -3167,12 +3141,10 @@ async def get_session_chunks(session_id: str):
 
 @router.get("/{session_id}/report", response_model=SessionReportResponse)
 async def get_session_report(session_id: str):
-    meta = await _read_json(_session_meta_key(session_id))
-    report = await _read_json(_session_report_key(session_id)) if meta is not None else None
-    if report is None and meta is not None and meta.get("status") == "finished":
+    meta = await _ensure_session(session_id)
+    report = await _read_json(_session_report_key(session_id))
+    if report is None and meta.get("status") == "finished":
         report = await _save_session_report(session_id, meta, meta.get("reportId"))
-    if report is None:
-        report = await _load_db_session_report_payload(session_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Session report not ready")
     return SessionReportResponse(

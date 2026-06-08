@@ -25,7 +25,7 @@ function DrillPlanContent() {
         drillId: drill.drillId,
         drillTarget: drill.target,
         maxAnswerSec: 90,
-        totalQuestions: 1,
+        totalQuestions: 3,
         initialQuestion: drill.question,
       }}
     >

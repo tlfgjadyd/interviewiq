@@ -12,7 +12,7 @@ class SessionCreate(BaseModel):
     industry: str | None = None
     totalQuestions: int = Field(default=12, ge=1, le=30)
     sessionType: Literal["full", "drill", "baseline"] = "full"
-    questionSetId: str | None = "full_13"
+    questionSetId: str | None = "full_12"
     courseId: str | None = None
     questionSetVersion: str | None = None
     baselineId: str | None = None

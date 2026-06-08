@@ -29,7 +29,7 @@ export type AnalysisFocus =
   | "specificity"
   | "relevance";
 
-export type QuestionSetId = "full_13" | "demo_5";
+export type QuestionSetId = "full_12" | "demo_5";
 
 export type InterviewQuestion = {
   questionId: string;

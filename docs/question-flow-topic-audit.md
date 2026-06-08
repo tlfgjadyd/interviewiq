@@ -2,7 +2,7 @@
 
 ## Current Status
 > Update: question set JSON has moved to the backend. The source of truth is now
-> `app/question_sets/full_13.json` and `app/question_sets/demo_5.json`, loaded by
+> `app/question_sets/full_12.json` and `app/question_sets/demo_5.json`, loaded by
 > `app/core/question_sets.py`. Frontend question JSON/loader files were removed;
 > frontend sends `questionSetId` and renders backend responses.
 
@@ -16,7 +16,7 @@ Target user-facing default:
 start
 -> user info
 -> baseline
--> full_13 interview
+-> full_12 interview
 -> result report
 -> flow/topic weakness analysis
 -> recommended drills
@@ -37,7 +37,7 @@ frontend/lib/question-types.ts
 Question set JSON files:
 
 ```text
-app/question_sets/full_13.json
+app/question_sets/full_12.json
 app/question_sets/demo_5.json
 ```
 
@@ -51,14 +51,14 @@ The loader imports both JSON files and exposes:
 
 ```ts
 load_question_set(questionSetId)
-load_question_set("full_13")
+load_question_set("full_12")
 ```
 
-Invalid or missing `questionSetId` falls back to `full_13`.
+Invalid or missing `questionSetId` falls back to `full_12`.
 
-## 2. full_13 / demo_5 Roles
+## 2. full_12 / demo_5 Roles
 
-`full_13`:
+`full_12`:
 
 ```text
 User-facing default full interview.
@@ -119,9 +119,9 @@ type InterviewQuestion = {
 `/interview` now uses:
 
 ```ts
-questionSetId: "full_13"
+questionSetId: "full_12"
 totalQuestions: 13
-initialQuestionMeta: full_13.questions[0]
+initialQuestionMeta: full_12.questions[0]
 ```
 
 The prior user-facing `totalQuestions = 5` default is removed from
@@ -143,7 +143,7 @@ Start response shape includes:
 ```json
 {
   "sessionId": "session_xxx",
-  "questionSetId": "full_13",
+  "questionSetId": "full_12",
   "totalQuestions": 13,
   "firstQuestion": "간단히 자기소개 부탁드립니다.",
   "firstQuestionMeta": {

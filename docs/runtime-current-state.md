@@ -44,7 +44,7 @@ full sessions and drill sessions. It creates a `StartSessionRequest` from
 `RuntimeConfig`, forwards that payload to the existing session adapter, controls
 answer recording state, and reads the finished drill session report after drill
 `endAnswer()`.
-For full sessions, the default `questionSetId` is `full_13`.
+For full sessions, the default `questionSetId` is `full_12`.
 
 ## Current Real Parts
 
@@ -97,7 +97,7 @@ Full session:
 ```json
 {
   "sessionType": "full",
-  "questionSetId": "full_13",
+  "questionSetId": "full_12",
   "maxAnswerSec": 90,
   "totalQuestions": 13
 }

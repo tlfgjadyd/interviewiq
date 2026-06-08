@@ -388,7 +388,7 @@ const Camera: React.FC<CameraProps> = ({
     mode === "stage"
       ? "relative z-10 h-full min-h-[420px] w-full overflow-hidden rounded-lg border border-white/15 bg-slate-950 text-white shadow-2xl shadow-black/20"
       : pipSize === "large"
-      ? "absolute bottom-[18%] right-[3.2%] z-30 w-[min(760px,46vw)] min-w-[560px] overflow-hidden rounded-2xl border border-white/20 bg-slate-950/82 text-white shadow-2xl shadow-black/30 backdrop-blur-md max-xl:w-[520px] max-xl:min-w-[440px] max-lg:static max-lg:w-full max-lg:min-w-0"
+      ? "absolute bottom-[18%] right-[3.2%] z-30 w-[min(570px,35vw)] min-w-[420px] overflow-hidden rounded-2xl border border-white/20 bg-slate-950/82 text-white shadow-2xl shadow-black/30 backdrop-blur-md max-xl:w-[390px] max-xl:min-w-[330px] max-lg:static max-lg:w-full max-lg:min-w-0"
       : "absolute bottom-12 right-8 z-30 w-[320px] overflow-hidden rounded-2xl border border-white/20 bg-slate-950/82 text-white shadow-2xl shadow-black/30 backdrop-blur-md max-xl:w-[280px] max-lg:static max-lg:w-full";
   const videoShellClassName =
     mode === "stage"

@@ -22,7 +22,7 @@ export default function DrillPage() {
         drillId: drill.id,
         drillTarget: drill.target,
         maxAnswerSec: 90,
-        totalQuestions: 1,
+        totalQuestions: 3,
         initialQuestion: drill.question,
       }}
     >

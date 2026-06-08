@@ -4,14 +4,23 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_QUESTION_SET_ID = "full_13"
+DEFAULT_QUESTION_SET_ID = "full_12"
 QUESTION_SET_DIR = Path(__file__).resolve().parents[1] / "question_sets"
 
 
 def _safe_question_set_id(question_set_id: str | None) -> str:
-    if question_set_id in {"full_13", "demo_5"}:
+    if question_set_id in {"full_12", "demo_5"}:
         return question_set_id
     return DEFAULT_QUESTION_SET_ID
+
+
+def _one_question_per_order(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected_by_order: dict[int, dict[str, Any]] = {}
+    for question in sorted(questions, key=lambda item: int(item.get("order") or 0)):
+        order = int(question.get("order") or 0)
+        if order not in selected_by_order:
+            selected_by_order[order] = question
+    return list(selected_by_order.values())
 
 
 @lru_cache(maxsize=8)
@@ -25,10 +34,7 @@ def load_question_set(question_set_id: str | None = None) -> dict[str, Any]:
     if not isinstance(questions, list) or not questions:
         raise ValueError(f"Question set {resolved_id} has no questions")
 
-    question_set["questions"] = sorted(
-        questions,
-        key=lambda question: int(question.get("order") or 0),
-    )
+    question_set["questions"] = _one_question_per_order(questions)
     return question_set
 
 
@@ -98,4 +104,3 @@ def progress_for_question(
         "isFinalQuestion": safe_index >= safe_total,
         "questionMeta": meta,
     }
-

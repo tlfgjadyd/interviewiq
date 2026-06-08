@@ -1,6 +1,6 @@
 {
-  "questionSetId": "full_13",
-  "name": "실전 면접 13문항",
+  "questionSetId": "full_12",
+  "name": "실전 면접 12문항",
   "description": "대기업/공기업 신입 공채 면접 흐름 기반 풀세션 질문 세트",
   "questions": [
     {
@@ -137,7 +137,7 @@
     },
     {
       "questionId": "q13_reverse_question",
-      "order": 13,
+      "order": 12,
       "flow": "closing",
       "topic": "reverse_question",
       "title": "마지막 질문",

@@ -12,7 +12,7 @@ def test_session_create_accepts_five_flow_runtime_fields():
         role="backend",
         interviewType="full",
         sessionType="drill",
-        questionSetId="full_13",
+        questionSetId="full_12",
         courseId="course_1",
         drillId="drill_1",
         drillTarget="project_experience",
@@ -21,7 +21,7 @@ def test_session_create_accepts_five_flow_runtime_fields():
     )
 
     assert payload.sessionType == "drill"
-    assert payload.questionSetId == "full_13"
+    assert payload.questionSetId == "full_12"
     assert payload.initialQuestion
 
 
@@ -46,7 +46,7 @@ def test_session_create_response_exposes_question_meta_and_course_fields():
     response = SessionCreateResponse(
         sessionId="s_1",
         sessionType="full",
-        questionSetId="full_13",
+        questionSetId="full_12",
         courseId="course_1",
         answerTurnId="turn_1",
         firstQuestion="자기소개를 해 주세요.",

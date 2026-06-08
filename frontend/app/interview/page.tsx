@@ -297,13 +297,7 @@ function InterviewStage() {
               LIVE
             </div>
 
-            <button
-              type="button"
-              aria-label="fullscreen"
-              className="absolute right-[3.2%] top-[3.4%] z-20 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-950/30 text-white shadow-lg backdrop-blur transition hover:bg-slate-950/45"
-            >
-              <Maximize2 className="h-5 w-5" />
-            </button>
+            
 
             <div className="absolute left-[4.8%] top-[40%] z-10 max-w-[37%] -translate-y-1/2 text-white">
               <p className="text-[clamp(18px,1.5vw,28px)] font-bold text-blue-300">
@@ -337,13 +331,15 @@ function InterviewStage() {
             )}
 
             {flowState === "answering" && silenceCountdown !== null && (
-              <div className="absolute left-1/2 top-[10%] z-30 w-[min(560px,calc(100%-32px))] -translate-x-1/2 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-slate-950 shadow-2xl">
-                <p className="text-sm font-semibold text-amber-700">
-                  침묵 시간이 길어지고 있습니다
-                </p>
-                <p className="mt-1 text-sm text-slate-700">
-                  {silenceCountdown}초 안에 답변이 이어지지 않으면 자동으로 종료됩니다.
-                </p>
+              <div className="absolute left-1/2 top-[7.5%] z-30 -translate-x-1/2 rounded-2xl border border-white/14 bg-white/10 px-5 py-3 text-white shadow-[0_18px_52px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-2.5 w-2.5 rounded-full bg-rose-400 shadow-[0_0_14px_rgba(251,113,133,0.85)]" />
+                  <span className="text-sm font-bold">침묵이 감지되었습니다</span>
+                  <span className="h-4 w-px bg-white/18" />
+                  <span className="font-mono text-sm font-bold tabular-nums text-white/90">
+                    {silenceCountdown}초 후 자동 종료됩니다
+                  </span>
+                </div>
               </div>
             )}
 
@@ -397,7 +393,7 @@ export default function InterviewPage() {
     <InterviewRuntimeProvider
       config={{
         sessionType: "full",
-        questionSetId: "full_13",
+        questionSetId: "full_12",
         maxAnswerSec: ANSWER_SECONDS,
         totalQuestions,
       }}

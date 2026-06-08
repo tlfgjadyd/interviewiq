@@ -135,7 +135,7 @@ finishSession()
 현재 기본 full interview는 13문항이다.
 
 ```text
-questionSetId = full_13
+questionSetId = full_12
 totalQuestions = 13
 ```
 
@@ -187,7 +187,7 @@ analysisFocus
 관련 파일:
 
 ```text
-app/question_sets/full_13.json
+app/question_sets/full_12.json
 app/question_sets/demo_5.json
 frontend/lib/question-types.ts
 app/core/question_sets.py
@@ -479,7 +479,7 @@ frontend/lib/training.ts
 질문 세트:
 
 ```text
-app/question_sets/full_13.json
+app/question_sets/full_12.json
 app/question_sets/demo_5.json
 frontend/lib/question-types.ts
 app/core/question_sets.py

@@ -316,7 +316,7 @@ async def upsert():
         "role": "백엔드 개발",
         "interviewType": "full",
         "sessionType": "full",
-        "questionSetId": "full_13",
+        "questionSetId": "full_12",
         "courseId": COURSE_ID,
         "status": "finished",
         "currentAnswerTurnId": "a_report_fixture_12",

@@ -85,7 +85,7 @@ export async function POST(request: Request, context: RouteContext) {
     const sessionType: SessionType =
       body.sessionType === "drill" ? "drill" : "full";
     const questionSetId: QuestionSetId =
-      body.questionSetId === "demo_5" ? "demo_5" : "full_13";
+      body.questionSetId === "demo_5" ? "demo_5" : "full_12";
     const currentQuestionMeta =
       sessionType === "drill" && typeof body.initialQuestion === "string"
         ? undefined

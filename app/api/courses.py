@@ -553,7 +553,7 @@ async def start_course_session(
         role=course.role or "general",
         interviewType=course.interview_type or "project_experience",
         sessionType=payload.sessionType,
-        questionSetId="demo_5" if payload.sessionType == "baseline" else "full_13",
+        questionSetId="demo_5" if payload.sessionType == "baseline" else "full_12",
         courseId=course_id,
         sourceSessionId=payload.sourceSessionId,
         drillId=payload.drillId,

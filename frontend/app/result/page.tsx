@@ -307,27 +307,6 @@ function TimelineGraph({
       </div>
 
       <div className="mt-5 overflow-hidden rounded-lg border border-slate-100 bg-slate-50">
-        <div className="relative h-16 border-b border-slate-100 text-center text-xs font-semibold">
-          {questionMarkers.map(({ question, index, startLeft, width }) => (
-            <button
-              key={`${question.answerTurnId ?? question.questionId ?? index}-question-band`}
-              type="button"
-              onClick={() => onSeek(index * QUESTION_DURATION_MS)}
-              className={`absolute top-0 h-full border-r border-slate-200 px-2 py-2 text-left ${
-                index % 3 === 2 ? "bg-rose-50 text-rose-600" : index % 3 === 0 ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
-              }`}
-              style={{ left: `${startLeft}%`, width: `${width}%` }}
-            >
-              Q{question.questionIndex ?? index + 1}
-              <span className="ml-1 hidden xl:inline">
-                {question.topic ? String(question.topic) : "질문"}
-              </span>
-              <span className="block pt-1 font-mono text-[11px] font-medium">
-                {formatTime(index * QUESTION_DURATION_MS)} ~ {formatTime((index + 1) * QUESTION_DURATION_MS)}
-              </span>
-            </button>
-          ))}
-        </div>
 
         <div className="grid gap-4 p-4 lg:grid-cols-[130px_1fr]">
           <div className="space-y-3 pt-5 text-xs font-medium text-slate-600">
@@ -397,57 +376,28 @@ function TimelineGraph({
               />
             </svg>
 
-            {unstableSegment ? (
-              <button
-                type="button"
-                onClick={() => onSeek(unstableSegment.t0)}
-                className="absolute left-1/2 top-9 -translate-x-1/2 rounded-lg bg-rose-500 px-4 py-2 text-xs font-bold text-white shadow-lg"
-              >
-                가장 불안정한 구간
-                <span className="block font-mono">
-                  {formatTime(unstableSegment.t0)} ~ {formatTime(unstableSegment.t1)}
-                </span>
-              </button>
-            ) : null}
+            
 
             <div className="relative mt-2 h-8 rounded-full bg-slate-200">
-              <span
-                className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-violet-500 shadow"
+               {questionMarkers.map(({ question, index, left }) => (
+               <button
+                 key={`${question.answerTurnId ?? question.questionId ?? index}-x-label`}
+                 type="button"
+                 onClick={() => onSeek(index * QUESTION_DURATION_MS)}
+                 className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/90 px-2 py-0.5 font-mono text-[10px] font-bold text-slate-600 shadow-sm hover:bg-violet-50 hover:text-violet-700"
+                 style={{ left: `${left}%` }}
+               >
+                  Q{question.questionIndex ?? index + 1}
+               </button>
+             ))}
+
+             <span
+                className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500 shadow"
                 style={{ left: `${cursorLeft}%` }}
               />
-              {segments.map((segment) => {
-                const left = clamp((segment.t0 / durationMs) * 100);
-                const color =
-                  segment.severity === "high"
-                    ? "bg-rose-500"
-                    : segment.severity === "medium"
-                    ? "bg-amber-500"
-                    : "bg-emerald-500";
-                return (
-                  <button
-                    key={`${segment.id}-dot`}
-                    type="button"
-                    title={segment.label}
-                    onClick={() => onSeek(segment.t0)}
-                    className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ${color}`}
-                    style={{ left: `${left}%` }}
-                  />
-                );
-              })}
             </div>
-            <div className="relative mt-3 h-6 font-mono text-[11px] font-semibold text-slate-500">
-              {questionMarkers.map(({ question, index, left }) => (
-                <button
-                  key={`${question.answerTurnId ?? question.questionId ?? index}-x-label`}
-                  type="button"
-                  onClick={() => onSeek(index * QUESTION_DURATION_MS)}
-                  className="absolute top-0 -translate-x-1/2 rounded px-1 py-0.5 hover:bg-slate-100 hover:text-violet-700"
-                  style={{ left: `${left}%` }}
-                >
-                  Q{question.questionIndex ?? index + 1}
-                </button>
-              ))}
-            </div>
+
+
             <div className="mt-2 flex justify-between font-mono text-xs text-slate-500">
               <span>00:00</span>
               <span>{formatTime(durationMs)}</span>
@@ -515,7 +465,7 @@ function ScorePanel({ report }: { report: InterviewReport }) {
               : `기준 세션보다 ${Math.abs(averageDelta)}점 낮아졌습니다.`}
           </p>
         </div>
-        <div className="rounded-lg bg-violet-50 px-5 py-4 text-center">
+        <div className="rounded-lg bg-blue-50 px-5 py-4 text-center">
           <p className="text-xs font-semibold text-slate-500">Baseline 대비</p>
           <p
             className={`mt-2 font-mono text-3xl font-bold ${
@@ -675,7 +625,7 @@ function InsightPanel({
       </div>
 
       {drillHref ? (
-        <Button asChild className="mt-6 h-12 w-full bg-violet-600 text-base font-bold hover:bg-violet-700">
+        <Button asChild className="mt-6 h-12 w-full bg-blue-600 text-base font-bold hover:bg-blue-700">
           <Link href={drillHref}>
             맞춤 교정 가이드 보기
             <ArrowRight className="h-4 w-4" />
@@ -844,7 +794,7 @@ function ResultContent() {
                 다른 세션과 비교
               </Link>
             </Button>
-            <Button asChild className="bg-violet-600 hover:bg-violet-700">
+            <Button asChild className="bg-blue-600 hover:bg-blue-700">
               <Link href="/documents">새로운 세션 분석</Link>
             </Button>
           </div>
@@ -879,7 +829,7 @@ function ResultContent() {
         <section className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr]">
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-violet-600" />
+              <BarChart3 className="h-5 w-5 text-blue-600" />
               <h2 className="text-lg font-semibold">세부 평가 항목</h2>
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -901,13 +851,13 @@ function ResultContent() {
 
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2">
-              <Target className="h-5 w-5 text-violet-600" />
+              <Target className="h-5 w-5 text-blue-600" />
               <h2 className="text-lg font-semibold">추천 교정 드릴</h2>
             </div>
             <div className="mt-4 grid gap-3">
               {report.recommendedPlan.drills.map((drill, index) => (
                 <article key={drill.drillId} className="rounded-lg border border-slate-200 p-4">
-                  <p className="text-xs font-bold text-violet-600">드릴 {index + 1}</p>
+                  <p className="text-xs font-bold text-blue-600">드릴 {index + 1}</p>
                   <h3 className="mt-1 font-semibold">{drill.title}</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     {drill.instruction}
